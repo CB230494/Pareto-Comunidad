@@ -16,20 +16,22 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
-from unidecode import unidecode
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide")
 
 # -------------------------
-# Utilidades de normalización
+# Utilidades de normalización (sin Unidecode)
 # -------------------------
 def norm(s: str) -> str:
+    """Normaliza strings: quita tildes, baja a minúsculas y colapsa espacios."""
     if s is None:
         return ""
     if not isinstance(s, str):
         s = str(s)
-    s = unidecode(s.strip().lower())
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.strip().lower()
     s = re.sub(r"\s+", " ", s)
     return s
 
@@ -71,9 +73,9 @@ def read_plantilla_matriz(file) -> pd.DataFrame:
 def read_desc(file) -> pd.DataFrame:
     # Esperado: NOMBRE CORTO, CATEGORÍA, DESCRIPTOR, DESCRIPCIÓN
     df = pd.read_excel(file, sheet_name="Descriptores (ACTUALIZADOS)")
-    # Limpieza de encabezados (quitar espacios y normalizar)
-    df.columns = [c.strip() for c in df.columns]
-    # Renombrar variantes comunes si vinieran con diferencias
+    # Limpieza de encabezados
+    df.columns = [str(c).strip() for c in df.columns]
+    # Renombrar variantes comunes si llegan distintas
     ren = {
         "CATEGORIA": "CATEGORÍA",
         "DESCRIPTORES": "DESCRIPTOR",
@@ -87,7 +89,7 @@ def read_desc(file) -> pd.DataFrame:
     miss = [c for c in needed if c not in df.columns]
     if miss:
         raise ValueError(f"Faltan columnas en Descriptores (ACTUALIZADOS): {miss}")
-    # Drop filas vacías de DESCRIPTOR
+    # Filas válidas
     df = df.dropna(subset=["DESCRIPTOR"]).copy()
     return df
 
@@ -103,7 +105,7 @@ def build_keyword_maps(desc_df: pd.DataFrame) -> Tuple[Dict[str, str], Dict[str,
     cat_by_desc = {}
     for _, r in desc_df.iterrows():
         desc = str(r["DESCRIPTOR"]).strip()
-        cat = str(r["CATEGORÍA"]).strip() if not pd.isna(r["CATEGORÍA"]) else ""
+        cat = str(r["CATEGORÍA"]).strip() if "CATEGORÍA" in r and not pd.isna(r["CATEGORÍA"]) else ""
         nc = str(r["NOMBRE CORTO"]).strip() if "NOMBRE CORTO" in desc_df.columns and not pd.isna(r["NOMBRE CORTO"]) else ""
         if desc:
             by_desc_norm[norm(desc)] = desc
@@ -124,17 +126,15 @@ def detect_descriptors_from_dataframe(df: pd.DataFrame,
       y la celda está marcada (no vacía/True/"si"/"sí"/"1"), cuenta 1 mención.
     - Además, examina texto en celdas (strings) y busca substrings que empaten con DESCRIPTOR/NOMBRE CORTO.
     """
-    # Set de claves normalizadas para búsqueda rápida
     keys_desc = list(by_desc_norm.keys())
     keys_nc = list(by_nc_norm.keys())
 
     hits: List[str] = []
 
-    # Mapa rápido de columnas candidatas (por encabezado)
+    # Mapa de columnas que ya "apuntan" a un descriptor por su encabezado
     col_map_descriptor = {}  # col -> DESCRIPTOR (si el header matchea)
     for col in df.columns:
         ncol = norm(str(col))
-        # match exacto/substring con descriptor
         matched_desc = None
         for k in keys_desc:
             if k and (k == ncol or k in ncol or ncol in k):
@@ -156,19 +156,17 @@ def detect_descriptors_from_dataframe(df: pd.DataFrame,
         v = norm(str(val))
         return v not in ("", "no", "0", "nan", "ninguno") and v != "false"
 
-    # 1) Recorremos columnas "mapeadas por encabezado"
+    # 1) Recorremos columnas mapeadas por encabezado
     for col, desc in col_map_descriptor.items():
         for _, v in df[col].items():
             if is_marked(v):
                 hits.append(desc)
 
-    # 2) Búsqueda en texto de todas las celdas tipo string
-    #    - Divide por separadores comunes y revisa cada token
+    # 2) Búsqueda en texto libre en todas las celdas
     for col in df.columns:
         series = df[col]
         for _, v in series.items():
             if isinstance(v, str) and v.strip():
-                # tokens directos
                 tokens = split_tokens(v)
                 if not tokens:
                     tokens = [v]
@@ -198,7 +196,6 @@ def make_copilado(hits: List[str]) -> pd.DataFrame:
         return pd.DataFrame({"Descriptor": [], "Frecuencia": []})
     s = pd.Series(hits, name="Descriptor")
     df = s.value_counts(dropna=False).rename_axis("Descriptor").reset_index(name="Frecuencia")
-    # Orden desc por Frecuencia (y por Descriptor para estabilidad)
     df = df.sort_values(["Frecuencia", "Descriptor"], ascending=[False, True], ignore_index=True)
     return df
 
@@ -217,7 +214,6 @@ def make_pareto(copilado_df: pd.DataFrame, cat_by_desc: Dict[str, str]) -> pd.Da
     df["% Acumulado"] = df["Porcentaje"].cumsum()
     df["Acumulado"] = df["Frecuencia"].cumsum()
     df["80/20"] = np.where(df["% Acumulado"] <= 80.0, "≤80%", ">80%")
-    # Reordenar columnas al formato solicitado
     df = df[["Categoría", "Descriptor", "Frecuencia", "Porcentaje", "% Acumulado", "Acumulado", "80/20"]]
     return df
 
@@ -232,14 +228,21 @@ def plot_pareto(df_pareto: pd.DataFrame):
 
     fig = go.Figure()
 
-    # Barras
+    # Barras (Frecuencia)
     fig.add_bar(x=x, y=y, name="Frecuencia", yaxis="y1")
 
-    # Línea acumulada
+    # Línea de % acumulado
     fig.add_trace(go.Scatter(x=x, y=cum, name="% Acumulado", yaxis="y2", mode="lines+markers"))
 
-    # Línea horizontal 80%
-    fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Corte 80%", annotation_position="top left", secondary_y=True)
+    # Línea de corte al 80% (en el eje secundario)
+    fig.add_trace(go.Scatter(
+        x=x,
+        y=[80.0] * len(x),
+        name="Corte 80%",
+        yaxis="y2",
+        mode="lines",
+        line=dict(dash="dash")
+    ))
 
     fig.update_layout(
         title="Pareto Comunidad",
@@ -266,41 +269,39 @@ def build_excel_bytes(copilado_df: pd.DataFrame, pareto_df: pd.DataFrame) -> byt
         wsP = writer.sheets["Pareto Comunidad"]
 
         # Insertar gráfico de Pareto (barras + línea) en Excel
-        # Construimos los rangos a partir del tamaño real de la tabla
         n = len(pareto_df)
-        # Columnas: Descriptor(B), Frecuencia(C), % Acumulado(E)
-        # (A) Categoría, (B) Descriptor, (C) Frecuencia, (D) Porcentaje, (E) % Acumulado, (F) Acumulado, (G) 80/20
-        chart = wb.add_chart({'type': 'column'})
+        if n >= 1:
+            # Columnas en hoja Pareto:
+            # (A) Categoría, (B) Descriptor, (C) Frecuencia, (D) Porcentaje, (E) % Acumulado, (F) Acumulado, (G) 80/20
+            chart = wb.add_chart({'type': 'column'})
 
-        # Series Frecuencia (barras)
-        chart.add_series({
-            'name':       'Frecuencia',
-            'categories': ['Pareto Comunidad', 1, 1, n, 1],  # B2:B(n+1)
-            'values':     ['Pareto Comunidad', 1, 2, n, 2],  # C2:C(n+1)
-            'y2_axis':    False
-        })
+            # Series Frecuencia (barras)
+            chart.add_series({
+                'name':       'Frecuencia',
+                'categories': ['Pareto Comunidad', 1, 1, n, 1],  # B2:B(n+1)
+                'values':     ['Pareto Comunidad', 1, 2, n, 2],  # C2:C(n+1)
+                'y2_axis':    False
+            })
 
-        # Línea % Acumulado
-        line_chart = wb.add_chart({'type': 'line'})
-        line_chart.add_series({
-            'name':       '% Acumulado',
-            'categories': ['Pareto Comunidad', 1, 1, n, 1],  # B
-            'values':     ['Pareto Comunidad', 1, 4, n, 4],  # E
-            'y2_axis':    True,
-            'marker':     {'type': 'automatic'}
-        })
+            # Línea % Acumulado
+            line_chart = wb.add_chart({'type': 'line'})
+            line_chart.add_series({
+                'name':       '% Acumulado',
+                'categories': ['Pareto Comunidad', 1, 1, n, 1],  # B
+                'values':     ['Pareto Comunidad', 1, 4, n, 4],  # E
+                'y2_axis':    True,
+                'marker':     {'type': 'automatic'}
+            })
 
-        chart.combine(line_chart)
-        chart.set_title({'name': 'Pareto Comunidad'})
-        chart.set_x_axis({'name': 'Descriptor'})
-        chart.set_y_axis({'name': 'Frecuencia'})
-        chart.set_y2_axis({'name': '% Acumulado', 'major_gridlines': {'visible': False}, 'min': 0, 'max': 100})
+            chart.combine(line_chart)
+            chart.set_title({'name': 'Pareto Comunidad'})
+            chart.set_x_axis({'name': 'Descriptor'})
+            chart.set_y_axis({'name': 'Frecuencia'})
+            chart.set_y2_axis({'name': '% Acumulado', 'major_gridlines': {'visible': False}, 'min': 0, 'max': 100})
 
-        # Insertar gráfico en la hoja (fila 2, col 9 aprox. = J3)
-        wsP.insert_chart(1, 9, chart, {'x_scale': 1.3, 'y_scale': 1.3})
+            # Insertar gráfico en la hoja (fila 2, col 9 ≈ J3)
+            wsP.insert_chart(1, 9, chart, {'x_scale': 1.3, 'y_scale': 1.3})
 
-        # Agregar una línea de referencia al 80% en la hoja (no hay objeto "línea horizontal" en xlsxwriter para y2,
-        # pero queda cubierta por el gráfico interactivo y por la columna "80/20" en la tabla).
     return output.getvalue()
 
 # -------------------------
