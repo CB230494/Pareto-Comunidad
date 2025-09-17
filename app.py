@@ -1,151 +1,28 @@
 # =========================
 # Pareto Comunidad – MSP (1 archivo, sin vueltas)
 # =========================
-# Flujo automático:
+# Flujo:
 # 1) Subí la Plantilla (XLSX) con hoja 'matriz'.
-# 2) La app lee TODAS las filas, mapea y categoriza (encabezados + códigos + texto abierto).
-# 3) Muestra Copilado, Pareto, gráfico y botón de descarga (Excel con gráfico).
+# 2) La app lee TODAS las filas, normaliza y desduplica encabezados.
+# 3) Detecta descriptores por: (a) ENCABEZADOS que contengan el nombre/sinónimos,
+#    y (b) TEXTO ABIERTO en columnas tipo texto.
+# 4) Muestra Copilado + Pareto + Gráfico y permite descargar Excel con el gráfico.
 
 import re
 import unicodedata
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple
 
-import streamlit as st
-import pandas as pd
 import numpy as np
+import pandas as pd
+import streamlit as st
 
 st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide", initial_sidebar_state="collapsed")
-TOP_N_GRAFICO = 40
-BLOCK_SIZE = 4000  # para columnas de texto grandes
+TOP_N_GRAFICO = 50
 
-# -------------------------------------------------------------------
-# 1) Catálogo base (Descriptor → Categoría) y sinónimos (texto libre)
-# -------------------------------------------------------------------
-CATALOGO_BASE = [
-    ("HURTO", "DELITOS CONTRA LA PROPIEDAD"),
-    ("ROBO", "DELITOS CONTRA LA PROPIEDAD"),
-    ("DAÑOS A LA PROPIEDAD", "DELITOS CONTRA LA PROPIEDAD"),
-    ("ASALTO", "DELITOS CONTRA LA PROPIEDAD"),
-    ("TENTATIVA DE ROBO", "DELITOS CONTRA LA PROPIEDAD"),
-
-    ("VENTA DE DROGAS", "DROGAS"),
-    ("TRÁFICO DE DROGAS", "DROGAS"),
-    ("MICROTRÁFICO", "DROGAS"),
-    ("CONSUMO DE DROGAS", "DROGAS"),
-    ("BÚNKER", "DROGAS"),
-    ("PUNTO DE VENTA", "DROGAS"),
-
-    ("CONSUMO DE ALCOHOL EN VÍA PÚBLICA", "ALCOHOL"),
-
-    ("HOMICIDIOS", "DELITOS CONTRA LA VIDA"),
-    ("HERIDOS", "DELITOS CONTRA LA VIDA"),
-    ("TENTATIVA DE HOMICIDIO", "DELITOS CONTRA LA VIDA"),
-
-    ("VIOLENCIA DOMÉSTICA", "VIOLENCIA"),
-    ("AGRESIÓN", "VIOLENCIA"),
-    ("ABUSO SEXUAL", "VIOLENCIA"),
-    ("VIOLACIÓN", "VIOLENCIA"),
-
-    ("ACOSO SEXUAL CALLEJERO", "RIESGO SOCIAL"),
-    ("ACOSO ESCOLAR (BULLYING)", "RIESGO SOCIAL"),
-    ("ACTOS OBSCENOS EN VIA PUBLICA", "RIESGO SOCIAL"),
-
-    ("PANDILLAS", "ORDEN PÚBLICO"),
-    ("INDIGENCIA", "ORDEN PÚBLICO"),
-    ("VAGANCIA", "ORDEN PÚBLICO"),
-    ("CONTAMINACIÓN SONORA", "ORDEN PÚBLICO"),
-    ("CARRERAS ILEGALES", "ORDEN PÚBLICO"),
-    ("PORTACIÓN DE ARMA BLANCA", "ORDEN PÚBLICO"),
-]
-
-# Sinónimos para texto libre (normalizados: minúsculas, sin tildes)
-SINONIMOS: Dict[str, List[str]] = {
-    "HURTO": ["hurto", "sustraccion sin violencia"],
-    "ROBO": ["robo", "robos", "asalto con violencia", "me robaron con violencia"],
-    "DAÑOS A LA PROPIEDAD": ["danos a la propiedad", "vandalismo", "grafiti", "destruccion de propiedad"],
-    "ASALTO": ["asalto", "asaltos", "atraco"],
-    "TENTATIVA DE ROBO": ["tentativa de robo"],
-
-    "VENTA DE DROGAS": ["venta de droga", "punto de venta", "narcomenudeo", "microtrafico"],
-    "TRÁFICO DE DROGAS": ["trafico de drogas", "narco", "trasiego"],
-    "MICROTRÁFICO": ["microtrafico", "micro trafico"],
-    "CONSUMO DE DROGAS": ["consumo de droga", "fumando crack", "consumo marihuana", "consumiendo drogas"],
-    "BÚNKER": ["bunker", "bunquer", "búnker"],
-    "PUNTO DE VENTA": ["punto de venta", "puntos de venta"],
-
-    "CONSUMO DE ALCOHOL EN VÍA PÚBLICA": ["consumo de alcohol", "licores en via publica", "tomando licor"],
-
-    "HOMICIDIOS": ["homicidio", "homicidios"],
-    "HERIDOS": ["herido", "heridos", "lesionados"],
-    "TENTATIVA DE HOMICIDIO": ["tentativa de homicidio"],
-
-    "VIOLENCIA DOMÉSTICA": ["violencia domestica", "violencia intrafamiliar", "maltrato en el hogar"],
-    "AGRESIÓN": ["agresion", "agresiones", "pelea", "golpiza"],
-    "ABUSO SEXUAL": ["abuso sexual", "tocamientos", "abuso a menor"],
-    "VIOLACIÓN": ["violacion", "violada", "violador"],
-
-    "ACOSO SEXUAL CALLEJERO": ["acoso sexual callejero", "acoso en la calle"],
-    "ACOSO ESCOLAR (BULLYING)": ["acoso escolar", "bullying"],
-    "ACTOS OBSCENOS EN VIA PUBLICA": ["actos obscenos", "exhibicionismo"],
-
-    "PANDILLAS": ["pandillas", "bandas", "mareros"],
-    "INDIGENCIA": ["indigencia", "habitantes de calle", "personas en situacion de calle"],
-    "VAGANCIA": ["vagancia", "vagos"],
-    "CONTAMINACIÓN SONORA": ["ruido", "contaminacion sonora", "musica alta", "bulla"],
-    "CARRERAS ILEGALES": ["carreras ilegales", "piques", "piqueras"],
-    "PORTACIÓN DE ARMA BLANCA": ["arma blanca", "portacion de cuchillo", "machete"],
-}
-
-# -------------------------------------------------------------------
-# 2) Mapeo por CÓDIGOS (columna → código → descriptor/categoría)
-#     -> Si tu plantilla usa códigos numéricos en columnas, se suman aquí.
-#     -> Puedes ampliar/ajustar fácilmente esta lista.
-# -------------------------------------------------------------------
-# Formato: ("nombre_de_columna_normalizado", codigo, "DESCRIPTOR", "CATEGORÍA")
-MAPEO_CODIGOS: List[Tuple[str, object, str, str]] = [
-    # ======= ejemplos comunes =======
-    # Columnas que codifican problemas/tipos en números (1=..., 2=..., etc.)
-    # Usa nombres NORMALIZADOS de columnas (minúsculas, sin tildes, espacios simples).
-    # Ajusta/añade si detectas columnas específicas de tu formulario.
-    ("hurto", 1, "HURTO", "DELITOS CONTRA LA PROPIEDAD"),
-    ("robo", 1, "ROBO", "DELITOS CONTRA LA PROPIEDAD"),
-    ("danos a la propiedad", 1, "DAÑOS A LA PROPIEDAD", "DELITOS CONTRA LA PROPIEDAD"),
-    ("asalto", 1, "ASALTO", "DELITOS CONTRA LA PROPIEDAD"),
-
-    ("venta de drogas", 1, "VENTA DE DROGAS", "DROGAS"),
-    ("trafico de drogas", 1, "TRÁFICO DE DROGAS", "DROGAS"),
-    ("microtrafico", 1, "MICROTRÁFICO", "DROGAS"),
-    ("consumo de drogas", 1, "CONSUMO DE DROGAS", "DROGAS"),
-    ("bunker", 1, "BÚNKER", "DROGAS"),
-    ("punto de venta", 1, "PUNTO DE VENTA", "DROGAS"),
-
-    ("consumo de alcohol en via publica", 1, "CONSUMO DE ALCOHOL EN VÍA PÚBLICA", "ALCOHOL"),
-
-    ("homicidios", 1, "HOMICIDIOS", "DELITOS CONTRA LA VIDA"),
-    ("heridos", 1, "HERIDOS", "DELITOS CONTRA LA VIDA"),
-    ("tentativa de homicidio", 1, "TENTATIVA DE HOMICIDIO", "DELITOS CONTRA LA VIDA"),
-
-    ("violencia domestica", 1, "VIOLENCIA DOMÉSTICA", "VIOLENCIA"),
-    ("agresion", 1, "AGRESIÓN", "VIOLENCIA"),
-    ("abuso sexual", 1, "ABUSO SEXUAL", "VIOLENCIA"),
-    ("violacion", 1, "VIOLACIÓN", "VIOLENCIA"),
-
-    ("acoso sexual callejero", 1, "ACOSO SEXUAL CALLEJERO", "RIESGO SOCIAL"),
-    ("acoso escolar", 1, "ACOSO ESCOLAR (BULLYING)", "RIESGO SOCIAL"),
-    ("actos obscenos", 1, "ACTOS OBSCENOS EN VIA PUBLICA", "RIESGO SOCIAL"),
-
-    ("pandillas", 1, "PANDILLAS", "ORDEN PÚBLICO"),
-    ("indigencia", 1, "INDIGENCIA", "ORDEN PÚBLICO"),
-    ("vagancia", 1, "VAGANCIA", "ORDEN PÚBLICO"),
-    ("ruido", 1, "CONTAMINACIÓN SONORA", "ORDEN PÚBLICO"),
-    ("carreras ilegales", 1, "CARRERAS ILEGALES", "ORDEN PÚBLICO"),
-    ("armas blancas", 1, "PORTACIÓN DE ARMA BLANCA", "ORDEN PÚBLICO"),
-]
-
-# =========================
+# ---------------------------
 # Utilidades de normalización
-# =========================
+# ---------------------------
 def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFKD", s)
     return "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -158,147 +35,266 @@ def norm_text(s: Optional[str]) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out.columns = [norm_text(c) for c in out.columns]
+def make_unique_columns(cols: List[str]) -> List[str]:
+    """
+    Hace los nombres de columnas normalizados y únicos:
+    si hay duplicados, agrega sufijos __2, __3, ...
+    """
+    seen: Dict[str, int] = {}
+    out: List[str] = []
+    for c in cols:
+        nc = norm_text(c)
+        if nc in seen:
+            seen[nc] += 1
+            nc2 = f"{nc}__{seen[nc]}"
+        else:
+            seen[nc] = 1
+            nc2 = nc
+        out.append(nc2)
     return out
 
-def split_multi(value: str) -> List[str]:
-    if value is None:
-        return []
-    s = str(value)
-    if s.strip() == "":
-        return []
-    parts = re.split(r"[;,/|]+", s)
-    return [p.strip() for p in parts if p.strip() != ""]
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df2 = df.copy()
+    df2.columns = make_unique_columns([str(c) for c in df2.columns])
+    return df2
 
-# =========================
-# Lectura (usa TODAS las filas)
-# =========================
+# ---------------------------
+# Descriptores y categorías
+# ---------------------------
+# Catálogo principal (Descriptor -> Categoría)
+CATEGORIA_POR_DESCRIPTOR: Dict[str, str] = {
+    "Disturbios(Riñas)": "ORDEN PÚBLICO",
+    "Daños/Vandalismo": "DELITOS CONTRA LA PROPIEDAD",
+    "Extorsión": "DELITOS CONTRA LA PROPIEDAD",
+    "Hurto": "DELITOS CONTRA LA PROPIEDAD",
+    "Receptación": "DELITOS CONTRA LA PROPIEDAD",
+    "Contrabando": "DELITOS CONTRA LA PROPIEDAD",
+    "Maltrato animal": "ORDEN PÚBLICO",
+    "Tráfico ilegal de personas": "DELITOS CONTRA LA VIDA",
+    "Venta de drogas": "DROGAS",
+    "Homicidios": "DELITOS CONTRA LA VIDA",
+    "Lesiones": "DELITOS CONTRA LA VIDA",
+    "Delitos sexuales": "VIOLENCIA",
+    "Acoso sexual callejero": "RIESGO SOCIAL",
+    "Robo a personas": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a comercio (Intimidación)": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a vivienda (Intimidación)": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a transporte público con Intimidación": "DELITOS CONTRA LA PROPIEDAD",
+    "Estafas o defraudación": "DELITOS CONTRA LA PROPIEDAD",
+    "Estafa informática": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a comercio (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a edificacion (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a vivienda (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a vehículos (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
+    "Abigeato (Robo y destace de ganado)": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo de bienes agrícola": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo de vehículos": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo de cable": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo de combustible": "DELITOS CONTRA LA PROPIEDAD",
+    "Abandono de personas (Menor de edad, adulto mayor o capacidades diferentes)": "RIESGO SOCIAL",
+    "Explotacion Sexual infantil": "VIOLENCIA",
+    "Explotacion Laboral infantil": "VIOLENCIA",
+    "Caza ilegal": "ORDEN PÚBLICO",
+    "Pesca ilegal": "ORDEN PÚBLICO",
+    "Tala ilegal": "ORDEN PÚBLICO",
+    "Trata de personas": "DELITOS CONTRA LA VIDA",
+    "Violencia intrafamiliar": "VIOLENCIA",
+    "Contaminacion Sonica": "ORDEN PÚBLICO",
+    "Falta de oportunidades laborales.": "RIESGO SOCIAL",
+    "Problemas Vecinales.": "RIESGO SOCIAL",
+    "Usurpacion de terrenos (Precarios)": "ORDEN PÚBLICO",
+    "Personas en situación de calle.": "ORDEN PÚBLICO",
+    "Desvinculación escolar": "RIESGO SOCIAL",
+    "Zona de prostitución": "RIESGO SOCIAL",
+    "Consumo de alcohol en vía pública": "ALCOHOL",
+    "Personas con exceso de tiempo de ocio": "RIESGO SOCIAL",
+    "Falta de salubridad publica": "ORDEN PÚBLICO",
+    "Deficiencias en el alumbrado publico": "ORDEN PÚBLICO",
+    "Hospedajes ilegales (Cuarterías)": "ORDEN PÚBLICO",
+    "Lotes baldíos.": "ORDEN PÚBLICO",
+    "Ventas informales (Ambulantes)": "ORDEN PÚBLICO",
+    "Pérdida de espacios públicos": "ORDEN PÚBLICO",
+    "Falta de inversion social": "RIESGO SOCIAL",
+    "Consumo de drogas": "DROGAS",
+    "Deficiencia en la infraestructura vial": "ORDEN PÚBLICO",
+    "Bunker (Puntos de venta y consumo de drogas)": "DROGAS",
+}
+
+# Sinónimos (para texto y para matchear encabezados)
+# -> Claves normalizadas (sin tildes, minúsculas)
+SINONIMOS: Dict[str, List[str]] = {
+    "Disturbios(Riñas)": ["disturbios", "riñas", "riña", "peleas", "riñas callejeras"],
+    "Daños/Vandalismo": ["danos", "vandalismo", "grafiti", "daño a la propiedad", "destruccion"],
+    "Extorsión": ["extorsion", "cobro de piso", "vacuna"],
+    "Hurto": ["hurto", "sustraccion"],
+    "Receptación": ["receptacion", "compra de robado", "reduccion"],
+    "Contrabando": ["contrabando"],
+    "Maltrato animal": ["maltrato animal", "crueldad animal"],
+    "Tráfico ilegal de personas": ["trafico de personas", "trata de personas"],
+    "Venta de drogas": ["venta de drogas", "punto de venta", "narcomenudeo"],
+    "Homicidios": ["homicidio", "homicidios"],
+    "Lesiones": ["lesiones", "lesionados", "golpiza"],
+    "Delitos sexuales": ["delitos sexuales", "abuso sexual", "violacion", "acoso sexual"],
+    "Acoso sexual callejero": ["acoso sexual callejero", "acoso en la calle"],
+    "Robo a personas": ["robo a personas", "asalto a persona", "atraco a persona"],
+    "Robo a comercio (Intimidación)": ["robo a comercio intimidacion", "asalto a comercio", "intimidacion comercio"],
+    "Robo a vivienda (Intimidación)": ["robo a vivienda intimidacion", "asalto a vivienda"],
+    "Robo a transporte público con Intimidación": ["robo a transporte publico", "asalto bus"],
+    "Estafas o defraudación": ["estafas", "defraudacion", "estafa"],
+    "Estafa informática": ["estafa informatica", "phishing"],
+    "Robo a comercio (Tacha)": ["robo a comercio tacha", "tacha comercio"],
+    "Robo a edificacion (Tacha)": ["robo a edificacion tacha", "tacha edificacion"],
+    "Robo a vivienda (Tacha)": ["robo a vivienda tacha", "tacha vivienda"],
+    "Robo a vehículos (Tacha)": ["robo a vehiculos tacha", "tacha vehiculos"],
+    "Abigeato (Robo y destace de ganado)": ["abigeato", "robo de ganado"],
+    "Robo de bienes agrícola": ["robo de bienes agricola", "robo finca agricola"],
+    "Robo de vehículos": ["robo de vehiculos", "robo carro", "robo moto"],
+    "Robo de cable": ["robo de cable"],
+    "Robo de combustible": ["robo de combustible"],
+    "Abandono de personas (Menor de edad, adulto mayor o capacidades diferentes)": ["abandono de personas", "abandono de menor", "abandono adulto mayor"],
+    "Explotacion Sexual infantil": ["explotacion sexual infantil"],
+    "Explotacion Laboral infantil": ["explotacion laboral infantil", "trabajo infantil"],
+    "Caza ilegal": ["caza ilegal"],
+    "Pesca ilegal": ["pesca ilegal"],
+    "Tala ilegal": ["tala ilegal"],
+    "Trata de personas": ["trata de personas"],
+    "Violencia intrafamiliar": ["violencia intrafamiliar", "violencia domestica"],
+    "Contaminacion Sonica": ["contaminacion sonora", "ruido", "musica alta", "bulla"],
+    "Falta de oportunidades laborales.": ["falta de oportunidades laborales", "desempleo"],
+    "Problemas Vecinales.": ["problemas vecinales", "conflictos vecinales"],
+    "Usurpacion de terrenos (Precarios)": ["usurpacion de terrenos", "precarios"],
+    "Personas en situación de calle.": ["personas en situacion de calle", "indigencia", "habitantes de calle"],
+    "Desvinculación escolar": ["desvinculacion escolar", "abandono escolar"],
+    "Zona de prostitución": ["zona de prostitucion", "prostitucion"],
+    "Consumo de alcohol en vía pública": ["consumo de alcohol en via publica", "licores en via publica"],
+    "Personas con exceso de tiempo de ocio": ["exceso de tiempo de ocio", "ocio juvenil"],
+    "Falta de salubridad publica": ["falta de salubridad publica", "insalubridad"],
+    "Deficiencias en el alumbrado publico": ["deficiencias en el alumbrado publico", "alumbrado deficiente", "falta de alumbrado"],
+    "Hospedajes ilegales (Cuarterías)": ["hospedajes ilegales", "cuarterias"],
+    "Lotes baldíos.": ["lotes baldios", "lote baldío"],
+    "Ventas informales (Ambulantes)": ["ventas informales", "ambulantes"],
+    "Pérdida de espacios públicos": ["perdida de espacios publicos"],
+    "Falta de inversion social": ["falta de inversion social"],
+    "Consumo de drogas": ["consumo de drogas", "consumen drogas"],
+    "Deficiencia en la infraestructura vial": ["deficiencia en la infraestructura vial", "huecos", "baches"],
+    "Bunker (Puntos de venta y consumo de drogas)": ["bunker", "bunquer", "búnker", "punto de venta y consumo"],
+}
+
+# ---------------------------
+# Lectura (todas las filas) y protección de duplicados
+# ---------------------------
 @st.cache_data(show_spinner=False)
 def read_matriz(file_bytes: bytes) -> pd.DataFrame:
-    return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
+    df = pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
+    return df
 
-# =========================
-# Motor de detección
-# =========================
-def build_cat_map() -> Dict[str, str]:
-    return {d: c for d, c in CATALOGO_BASE}
-
+# ---------------------------
+# Detección
+# ---------------------------
 def build_regex_by_desc() -> Dict[str, re.Pattern]:
     compiled: Dict[str, re.Pattern] = {}
     for desc, keys in SINONIMOS.items():
-        keys = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
-        if not keys:
+        tokens = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
+        if not tokens:
             continue
-        # bordes “suaves” para español
-        pat = r"(?:(?<=\s)|^)(" + "|".join(keys) + r")(?:(?=\s)|$)"
+        # bordes "suaves" para español
+        pat = r"(?:(?<=\s)|^)(" + "|".join(tokens) + r")(?:(?=\s)|$)"
         compiled[desc] = re.compile(pat)
     return compiled
 
 def header_marked_series(s: pd.Series) -> pd.Series:
+    # Verdadero si la celda es numérica != 0 o texto no vacío distinto de ("no","0",...)
     num = pd.to_numeric(s, errors="coerce").fillna(0) != 0
     txt = s.astype(str).apply(norm_text)
     mask = ~txt.isin(["", "no", "0", "nan", "none", "false"])
     return num | mask
 
-def detect_by_headers(df_raw: pd.DataFrame) -> List[str]:
-    df = normalize_columns(df_raw)
-    hits: List[str] = []
-
-    # mapeo de encabezados → descriptor (por nombre)
-    desc_names = [norm_text(d) for d, _ in CATALOGO_BASE]
-    for col in df.columns:
-        ncol = norm_text(col)
-        # si el encabezado contiene el nombre de un descriptor, cuenta filas marcadas
-        for nd, (desc, _) in zip(desc_names, CATALOGO_BASE):
-            if (nd == ncol) or (nd in ncol) or (ncol in nd):
-                m = header_marked_series(df[col])
-                c = int(m.sum())
-                if c > 0:
-                    hits.extend([desc] * c)
-    return hits
-
-def detect_by_codes(df_raw: pd.DataFrame) -> List[str]:
-    """Cuenta a partir del MAPEO_CODIGOS (columna → código)"""
-    if not MAPEO_CODIGOS:
-        return []
-    df = normalize_columns(df_raw)
-    hits: List[str] = []
-    colset = set(df.columns)
-    for col_norm, code, desc, _cat in MAPEO_CODIGOS:
-        if col_norm not in colset:
+def detect_by_headers(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
+    """
+    Para cada descriptor: si el NOMBRE de alguna columna contiene el descriptor o sus sinónimos,
+    cuenta filas "marcadas" en esas columnas (OR por fila para no sobrecontar).
+    """
+    counts: Dict[str, int] = {d: 0 for d in CATEGORIA_POR_DESCRIPTOR.keys()}
+    # pre-normalizamos encabezados
+    cols = list(df_norm.columns)
+    for desc, pat in regex_by_desc.items():
+        # columnas cuyo nombre matchea el descriptor/sinónimos
+        hit_cols = [c for c in cols if re.search(pat, " " + c + " ") is not None]
+        if not hit_cols:
             continue
-        s = df[col_norm]
-        # cada celda puede tener multi-valores
-        def match_value(cell) -> bool:
-            if pd.isna(cell):
-                return False
-            # num puro
+        # OR entre todas esas columnas
+        mask_any = None
+        for c in hit_cols:
             try:
-                ncell = pd.to_numeric(cell)
-                return ncell == code
+                s = df_norm[c]
+                # si por duplicado de encabezado c agrupa varias, ya lo resolvimos haciendo columnas únicas
+                m = header_marked_series(s)
+                mask_any = m if mask_any is None else (mask_any | m)
             except Exception:
-                pass
-            parts = split_multi(str(cell))
-            if parts:
-                for p in parts:
-                    try:
-                        pn = pd.to_numeric(p)
-                        if pn == code:
-                            return True
-                    except Exception:
-                        if norm_text(p) == norm_text(str(code)):
-                            return True
-                return False
-            return norm_text(str(cell)) == norm_text(str(code))
-        c = int(s.apply(match_value).sum())
-        if c > 0:
-            hits.extend([desc] * c)
-    return hits
+                continue
+        if mask_any is not None:
+            counts[desc] += int(mask_any.sum())
+    return counts
 
-def guess_text_columns(df: pd.DataFrame) -> List[str]:
-    hints = ["por que", "por qué", "observ", "descr", "coment", "suger", "detalle", "porque", "actividad", "insegur"]
-    cols = []
-    for col in df.columns:
-        if df[col].dtype == object or any(h in norm_text(col) for h in hints):
-            sample = df[col].astype(str).head(200).apply(norm_text)
-            if (sample != "").mean() > 0.10 or any(h in norm_text(col) for h in hints):
-                cols.append(col)
-    return cols
+def guess_text_columns(df_norm: pd.DataFrame) -> List[str]:
+    """
+    Heurística segura para columnas de texto:
+    - dtype object o muchos strings
+    - nombres que sugieren campo abierto (observación, descripción, comentario, por qué, problema, etc.)
+    """
+    hints = ["observ", "descr", "coment", "suger", "porque", "por que", "por qué", "detalle", "problema", "actividad", "insegur"]
+    text_cols: List[str] = []
+    for col in df_norm.columns:
+        s = df_norm[col]
+        # si por duplicado vino como DataFrame (no debería por make_unique), lo saltamos
+        if not hasattr(s, "dtype"):
+            continue
+        looks_text = (getattr(s, "dtype", None) == object) or any(h in col for h in hints)
+        if looks_text:
+            # si hay suficientes no vacíos
+            sample = s.astype(str).head(200).apply(norm_text)
+            if (sample != "").mean() > 0.05 or any(h in col for h in hints):
+                text_cols.append(col)
+    return text_cols
 
-def detect_in_text(df_raw: pd.DataFrame) -> List[str]:
-    df = normalize_columns(df_raw)
-    text_cols = guess_text_columns(df)
+def detect_in_text(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
+    """
+    Para cada descriptor: OR de coincidencias en TODAS las columnas de texto (1 por fila máx).
+    """
+    counts: Dict[str, int] = {d: 0 for d in CATEGORIA_POR_DESCRIPTOR.keys()}
+    text_cols = guess_text_columns(df_norm)
     if not text_cols:
-        return []
-    regex_by_desc = build_regex_by_desc()
-    hits: List[str] = []
-    for col in text_cols:
-        col_norm = df[col].astype(str).apply(norm_text)
-        for desc, pat in regex_by_desc.items():
-            for i in range(0, len(col_norm), BLOCK_SIZE):
-                part = col_norm.iloc[i:i+BLOCK_SIZE]
-                c = int(part.str.contains(pat, na=False).sum())
-                if c > 0:
-                    hits.extend([desc] * c)
-    return hits
+        return counts
+    for desc, pat in regex_by_desc.items():
+        mask_any = None
+        for c in text_cols:
+            s = df_norm[c].astype(str).apply(norm_text)
+            m = s.str.contains(pat, na=False)
+            mask_any = m if mask_any is None else (mask_any | m)
+        if mask_any is not None:
+            counts[desc] += int(mask_any.sum())
+    return counts
 
-# =========================
-# Agregación y Pareto
-# =========================
-def make_copilado(hits: List[str]) -> pd.DataFrame:
-    if not hits:
+# ---------------------------
+# Copilado, Pareto y Excel
+# ---------------------------
+def build_copilado(counts_header: Dict[str, int], counts_text: Dict[str, int]) -> pd.DataFrame:
+    # sumamos conteos de encabezados y de texto
+    total_counts: Dict[str, int] = {}
+    for d in CATEGORIA_POR_DESCRIPTOR.keys():
+        total_counts[d] = counts_header.get(d, 0) + counts_text.get(d, 0)
+    # quitamos ceros
+    rows = [(d, f) for d, f in total_counts.items() if f > 0]
+    if not rows:
         return pd.DataFrame({"Descriptor": [], "Frecuencia": []})
-    s = pd.Series(hits, name="Descriptor")
-    df = s.value_counts(dropna=False).rename_axis("Descriptor").reset_index(name="Frecuencia")
-    return df.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
+    df = pd.DataFrame(rows, columns=["Descriptor", "Frecuencia"])
+    return df.sort_values(["Frecuencia", "Descriptor"], ascending=[False, True], ignore_index=True)
 
-def make_pareto(copilado_df: pd.DataFrame, cat_map: Dict[str, str]) -> pd.DataFrame:
-    if copilado_df.empty:
+def build_pareto(copilado: pd.DataFrame) -> pd.DataFrame:
+    if copilado.empty:
         return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% Acumulado","Acumulado","80/20"])
-    df = copilado_df.copy()
-    df["Categoría"] = df["Descriptor"].map(cat_map).fillna("")
+    df = copilado.copy()
+    df["Categoría"] = df["Descriptor"].map(CATEGORIA_POR_DESCRIPTOR).fillna("")
     total = df["Frecuencia"].sum()
     df["Porcentaje"] = (df["Frecuencia"] / total) * 100.0
     df = df.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
@@ -307,18 +303,16 @@ def make_pareto(copilado_df: pd.DataFrame, cat_map: Dict[str, str]) -> pd.DataFr
     df["80/20"] = np.where(df["% Acumulado"] <= 80.0, "≤80%", ">80%")
     return df[["Categoría","Descriptor","Frecuencia","Porcentaje","% Acumulado","Acumulado","80/20"]]
 
-# =========================
-# Exportación Excel con gráfico
-# =========================
 def export_excel(copilado: pd.DataFrame, pareto: pd.DataFrame) -> bytes:
     from pandas import ExcelWriter
-    import xlsxwriter  # noqa
-    out = BytesIO()
-    with ExcelWriter(out, engine="xlsxwriter") as writer:
+    import xlsxwriter  # noqa: F401
+    output = BytesIO()
+    with ExcelWriter(output, engine="xlsxwriter") as writer:
         copilado.to_excel(writer, index=False, sheet_name="Copilado Comunidad")
         pareto.to_excel(writer, index=False, sheet_name="Pareto Comunidad")
-        wb  = writer.book
-        wsP = writer.sheets["Pareto Comunidad"]
+        # gráfico
+        wb = writer.book
+        ws = writer.sheets["Pareto Comunidad"]
         n = len(pareto)
         if n:
             chart = wb.add_chart({'type': 'column'})
@@ -339,41 +333,44 @@ def export_excel(copilado: pd.DataFrame, pareto: pd.DataFrame) -> bytes:
             chart.set_x_axis({'name': 'Descriptor'})
             chart.set_y_axis({'name': 'Frecuencia'})
             chart.set_y2_axis({'name': '% Acumulado', 'min': 0, 'max': 100})
-            wsP.insert_chart(1, 9, chart, {'x_scale': 1.2, 'y_scale': 1.2})
-    return out.getvalue()
+            ws.insert_chart(1, 9, chart, {'x_scale': 1.2, 'y_scale': 1.2})
+    return output.getvalue()
 
-# =========================
-# UI mínima (1 solo archivo)
-# =========================
-st.title("Pareto Comunidad – MSP (automático)")
-archivo = st.file_uploader("📄 Subí la Plantilla (XLSX) – debe tener hoja `matriz`", type=["xlsx"])
+# ---------------------------
+# UI mínima
+# ---------------------------
+st.title("Pareto Comunidad – MSP (automático, 1 archivo)")
+archivo = st.file_uploader("📄 Subí la Plantilla (XLSX) – debe tener la hoja `matriz`", type=["xlsx"])
 
 if not archivo:
     st.info("Subí la Plantilla para procesar.")
     st.stop()
 
-# Leer TODAS las filas de 'matriz'
+# Lee TODAS las filas (571+), normaliza y desduplica encabezados
 try:
-    df_matriz = read_matriz(archivo.getvalue())
+    df_raw = read_matriz(archivo.getvalue())
 except Exception as e:
-    st.error(f"Error al leer la hoja `matriz`: {e}")
+    st.error(f"Error leyendo hoja `matriz`: {e}")
     st.stop()
 
-st.caption(f"Vista previa (primeras 20 de {len(df_matriz)} filas)")
-st.dataframe(df_matriz.head(20), use_container_width=True)
+df = normalize_columns(df_raw)
 
-# Detección combinada (sin pedir nada)
-with st.spinner("Procesando y categorizando (encabezados + códigos + texto abierto)…"):
-    cat_map = build_cat_map()
-    hits = []
-    hits += detect_by_headers(df_matriz)   # encabezados
-    hits += detect_by_codes(df_matriz)     # códigos embebidos
-    hits += detect_in_text(df_matriz)      # texto abierto
-    copilado = make_copilado(hits)
-    pareto = make_pareto(copilado, cat_map)
+st.caption(f"Vista previa (primeras 20 de {len(df)} filas) – columnas normalizadas y únicas")
+st.dataframe(df.head(20), use_container_width=True)
+
+with st.spinner("Procesando descriptores (encabezados + texto abierto)…"):
+    regex_by_desc = {desc: re.compile(r"(?:(?<=\s)|^)" + "|".join([re.escape(norm_text(k)) for k in SINONIMOS.get(desc, [desc]) if norm_text(k)]) + r"(?:(?=\s)|$)")
+                     for desc in CATEGORIA_POR_DESCRIPTOR.keys()}
+    # Conteo por encabezados
+    counts_headers = detect_by_headers(df, regex_by_desc)
+    # Conteo por texto
+    counts_text = detect_in_text(df, regex_by_desc)
+
+    copilado = build_copilado(counts_headers, counts_text)
+    pareto = build_pareto(copilado)
 
 if copilado.empty:
-    st.warning("No se detectaron descriptores con el catálogo/mapeo base. Si tu formulario usa otros nombres/códigos, dímelos y los dejo embebidos.")
+    st.warning("No se detectaron descriptores. Revisa que las columnas/textos contengan los nombres o sinónimos habituales.")
     st.stop()
 
 st.subheader("Copilado Comunidad")
