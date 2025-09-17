@@ -1,6 +1,10 @@
 # =========================
-# Pareto Comunidad – MSP (Plantilla + Diccionario, fix cache serializable)
+# Pareto Comunidad – MSP (1 archivo, sin vueltas)
 # =========================
+# Flujo automático:
+# 1) Subí la Plantilla (XLSX) con hoja 'matriz'.
+# 2) La app lee TODAS las filas, mapea y categoriza (encabezados + códigos + texto abierto).
+# 3) Muestra Copilado, Pareto, gráfico y botón de descarga (Excel con gráfico).
 
 import re
 import unicodedata
@@ -13,9 +17,134 @@ import numpy as np
 
 st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide", initial_sidebar_state="collapsed")
 TOP_N_GRAFICO = 40
+BLOCK_SIZE = 4000  # para columnas de texto grandes
+
+# -------------------------------------------------------------------
+# 1) Catálogo base (Descriptor → Categoría) y sinónimos (texto libre)
+# -------------------------------------------------------------------
+CATALOGO_BASE = [
+    ("HURTO", "DELITOS CONTRA LA PROPIEDAD"),
+    ("ROBO", "DELITOS CONTRA LA PROPIEDAD"),
+    ("DAÑOS A LA PROPIEDAD", "DELITOS CONTRA LA PROPIEDAD"),
+    ("ASALTO", "DELITOS CONTRA LA PROPIEDAD"),
+    ("TENTATIVA DE ROBO", "DELITOS CONTRA LA PROPIEDAD"),
+
+    ("VENTA DE DROGAS", "DROGAS"),
+    ("TRÁFICO DE DROGAS", "DROGAS"),
+    ("MICROTRÁFICO", "DROGAS"),
+    ("CONSUMO DE DROGAS", "DROGAS"),
+    ("BÚNKER", "DROGAS"),
+    ("PUNTO DE VENTA", "DROGAS"),
+
+    ("CONSUMO DE ALCOHOL EN VÍA PÚBLICA", "ALCOHOL"),
+
+    ("HOMICIDIOS", "DELITOS CONTRA LA VIDA"),
+    ("HERIDOS", "DELITOS CONTRA LA VIDA"),
+    ("TENTATIVA DE HOMICIDIO", "DELITOS CONTRA LA VIDA"),
+
+    ("VIOLENCIA DOMÉSTICA", "VIOLENCIA"),
+    ("AGRESIÓN", "VIOLENCIA"),
+    ("ABUSO SEXUAL", "VIOLENCIA"),
+    ("VIOLACIÓN", "VIOLENCIA"),
+
+    ("ACOSO SEXUAL CALLEJERO", "RIESGO SOCIAL"),
+    ("ACOSO ESCOLAR (BULLYING)", "RIESGO SOCIAL"),
+    ("ACTOS OBSCENOS EN VIA PUBLICA", "RIESGO SOCIAL"),
+
+    ("PANDILLAS", "ORDEN PÚBLICO"),
+    ("INDIGENCIA", "ORDEN PÚBLICO"),
+    ("VAGANCIA", "ORDEN PÚBLICO"),
+    ("CONTAMINACIÓN SONORA", "ORDEN PÚBLICO"),
+    ("CARRERAS ILEGALES", "ORDEN PÚBLICO"),
+    ("PORTACIÓN DE ARMA BLANCA", "ORDEN PÚBLICO"),
+]
+
+# Sinónimos para texto libre (normalizados: minúsculas, sin tildes)
+SINONIMOS: Dict[str, List[str]] = {
+    "HURTO": ["hurto", "sustraccion sin violencia"],
+    "ROBO": ["robo", "robos", "asalto con violencia", "me robaron con violencia"],
+    "DAÑOS A LA PROPIEDAD": ["danos a la propiedad", "vandalismo", "grafiti", "destruccion de propiedad"],
+    "ASALTO": ["asalto", "asaltos", "atraco"],
+    "TENTATIVA DE ROBO": ["tentativa de robo"],
+
+    "VENTA DE DROGAS": ["venta de droga", "punto de venta", "narcomenudeo", "microtrafico"],
+    "TRÁFICO DE DROGAS": ["trafico de drogas", "narco", "trasiego"],
+    "MICROTRÁFICO": ["microtrafico", "micro trafico"],
+    "CONSUMO DE DROGAS": ["consumo de droga", "fumando crack", "consumo marihuana", "consumiendo drogas"],
+    "BÚNKER": ["bunker", "bunquer", "búnker"],
+    "PUNTO DE VENTA": ["punto de venta", "puntos de venta"],
+
+    "CONSUMO DE ALCOHOL EN VÍA PÚBLICA": ["consumo de alcohol", "licores en via publica", "tomando licor"],
+
+    "HOMICIDIOS": ["homicidio", "homicidios"],
+    "HERIDOS": ["herido", "heridos", "lesionados"],
+    "TENTATIVA DE HOMICIDIO": ["tentativa de homicidio"],
+
+    "VIOLENCIA DOMÉSTICA": ["violencia domestica", "violencia intrafamiliar", "maltrato en el hogar"],
+    "AGRESIÓN": ["agresion", "agresiones", "pelea", "golpiza"],
+    "ABUSO SEXUAL": ["abuso sexual", "tocamientos", "abuso a menor"],
+    "VIOLACIÓN": ["violacion", "violada", "violador"],
+
+    "ACOSO SEXUAL CALLEJERO": ["acoso sexual callejero", "acoso en la calle"],
+    "ACOSO ESCOLAR (BULLYING)": ["acoso escolar", "bullying"],
+    "ACTOS OBSCENOS EN VIA PUBLICA": ["actos obscenos", "exhibicionismo"],
+
+    "PANDILLAS": ["pandillas", "bandas", "mareros"],
+    "INDIGENCIA": ["indigencia", "habitantes de calle", "personas en situacion de calle"],
+    "VAGANCIA": ["vagancia", "vagos"],
+    "CONTAMINACIÓN SONORA": ["ruido", "contaminacion sonora", "musica alta", "bulla"],
+    "CARRERAS ILEGALES": ["carreras ilegales", "piques", "piqueras"],
+    "PORTACIÓN DE ARMA BLANCA": ["arma blanca", "portacion de cuchillo", "machete"],
+}
+
+# -------------------------------------------------------------------
+# 2) Mapeo por CÓDIGOS (columna → código → descriptor/categoría)
+#     -> Si tu plantilla usa códigos numéricos en columnas, se suman aquí.
+#     -> Puedes ampliar/ajustar fácilmente esta lista.
+# -------------------------------------------------------------------
+# Formato: ("nombre_de_columna_normalizado", codigo, "DESCRIPTOR", "CATEGORÍA")
+MAPEO_CODIGOS: List[Tuple[str, object, str, str]] = [
+    # ======= ejemplos comunes =======
+    # Columnas que codifican problemas/tipos en números (1=..., 2=..., etc.)
+    # Usa nombres NORMALIZADOS de columnas (minúsculas, sin tildes, espacios simples).
+    # Ajusta/añade si detectas columnas específicas de tu formulario.
+    ("hurto", 1, "HURTO", "DELITOS CONTRA LA PROPIEDAD"),
+    ("robo", 1, "ROBO", "DELITOS CONTRA LA PROPIEDAD"),
+    ("danos a la propiedad", 1, "DAÑOS A LA PROPIEDAD", "DELITOS CONTRA LA PROPIEDAD"),
+    ("asalto", 1, "ASALTO", "DELITOS CONTRA LA PROPIEDAD"),
+
+    ("venta de drogas", 1, "VENTA DE DROGAS", "DROGAS"),
+    ("trafico de drogas", 1, "TRÁFICO DE DROGAS", "DROGAS"),
+    ("microtrafico", 1, "MICROTRÁFICO", "DROGAS"),
+    ("consumo de drogas", 1, "CONSUMO DE DROGAS", "DROGAS"),
+    ("bunker", 1, "BÚNKER", "DROGAS"),
+    ("punto de venta", 1, "PUNTO DE VENTA", "DROGAS"),
+
+    ("consumo de alcohol en via publica", 1, "CONSUMO DE ALCOHOL EN VÍA PÚBLICA", "ALCOHOL"),
+
+    ("homicidios", 1, "HOMICIDIOS", "DELITOS CONTRA LA VIDA"),
+    ("heridos", 1, "HERIDOS", "DELITOS CONTRA LA VIDA"),
+    ("tentativa de homicidio", 1, "TENTATIVA DE HOMICIDIO", "DELITOS CONTRA LA VIDA"),
+
+    ("violencia domestica", 1, "VIOLENCIA DOMÉSTICA", "VIOLENCIA"),
+    ("agresion", 1, "AGRESIÓN", "VIOLENCIA"),
+    ("abuso sexual", 1, "ABUSO SEXUAL", "VIOLENCIA"),
+    ("violacion", 1, "VIOLACIÓN", "VIOLENCIA"),
+
+    ("acoso sexual callejero", 1, "ACOSO SEXUAL CALLEJERO", "RIESGO SOCIAL"),
+    ("acoso escolar", 1, "ACOSO ESCOLAR (BULLYING)", "RIESGO SOCIAL"),
+    ("actos obscenos", 1, "ACTOS OBSCENOS EN VIA PUBLICA", "RIESGO SOCIAL"),
+
+    ("pandillas", 1, "PANDILLAS", "ORDEN PÚBLICO"),
+    ("indigencia", 1, "INDIGENCIA", "ORDEN PÚBLICO"),
+    ("vagancia", 1, "VAGANCIA", "ORDEN PÚBLICO"),
+    ("ruido", 1, "CONTAMINACIÓN SONORA", "ORDEN PÚBLICO"),
+    ("carreras ilegales", 1, "CARRERAS ILEGALES", "ORDEN PÚBLICO"),
+    ("armas blancas", 1, "PORTACIÓN DE ARMA BLANCA", "ORDEN PÚBLICO"),
+]
 
 # =========================
-# Utils
+# Utilidades de normalización
 # =========================
 def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFKD", s)
@@ -29,8 +158,12 @@ def norm_text(s: Optional[str]) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out.columns = [norm_text(c) for c in out.columns]
+    return out
+
 def split_multi(value: str) -> List[str]:
-    """Divide '1,3;5/6|7' -> ['1','3','5','6','7']"""
     if value is None:
         return []
     s = str(value)
@@ -39,159 +172,147 @@ def split_multi(value: str) -> List[str]:
     parts = re.split(r"[;,/|]+", s)
     return [p.strip() for p in parts if p.strip() != ""]
 
-def build_header_index(df_matriz: pd.DataFrame) -> Dict[str, str]:
-    """nombre_normalizado -> nombre_real_columna"""
-    return {norm_text(str(c)): c for c in df_matriz.columns}
-
-def match_value(cell, code) -> bool:
-    """Compara celda vs código (número o texto). Soporta celdas con múltiples valores."""
-    # preparar lista de códigos candidatos
-    code_items = []
-    if isinstance(code, (int, float)) and not pd.isna(code):
-        code_items = [code]
-    else:
-        for piece in split_multi(str(code)):
-            try:
-                n = pd.to_numeric(piece)
-                code_items.append(int(n) if float(n).is_integer() else float(n))
-            except Exception:
-                code_items.append(norm_text(piece))
-
-    if pd.isna(cell):
-        return False
-
-    # numérico puro
-    try:
-        ncell = pd.to_numeric(cell)
-        return any((isinstance(ci, (int, float)) and ncell == ci) for ci in code_items)
-    except Exception:
-        pass
-
-    # texto (posible lista)
-    parts = split_multi(str(cell))
-    if parts:
-        for p in parts:
-            # comparar número
-            try:
-                pn = pd.to_numeric(p)
-                if any((isinstance(ci, (int, float)) and pn == ci) for ci in code_items):
-                    return True
-            except Exception:
-                # comparar texto normalizado
-                pn = norm_text(p)
-                if any((not isinstance(ci, (int, float)) and pn == ci) for ci in code_items):
-                    return True
-        return False
-    # texto simple
-    nt = norm_text(str(cell))
-    return any((not isinstance(ci, (int, float)) and nt == ci) for ci in code_items)
-
 # =========================
-# Lectura (cacheando SOLO datos serializables)
+# Lectura (usa TODAS las filas)
 # =========================
 @st.cache_data(show_spinner=False)
-def read_matriz_bytes(file_bytes: bytes) -> pd.DataFrame:
-    # Usa TODAS las filas de 'matriz'
+def read_matriz(file_bytes: bytes) -> pd.DataFrame:
     return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
 
-@st.cache_data(show_spinner=False)
-def get_sheet_names(file_bytes: bytes) -> List[str]:
-    # Devuelvo SOLO la lista de hojas (serializable)
-    xls = pd.ExcelFile(BytesIO(file_bytes))
-    return xls.sheet_names
+# =========================
+# Motor de detección
+# =========================
+def build_cat_map() -> Dict[str, str]:
+    return {d: c for d, c in CATALOGO_BASE}
 
-@st.cache_data(show_spinner=False)
-def read_mapping_sheet(file_bytes: bytes, sheet_name: str) -> pd.DataFrame:
-    # Leo una hoja específica del diccionario desde bytes
-    return pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, engine="openpyxl")
+def build_regex_by_desc() -> Dict[str, re.Pattern]:
+    compiled: Dict[str, re.Pattern] = {}
+    for desc, keys in SINONIMOS.items():
+        keys = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
+        if not keys:
+            continue
+        # bordes “suaves” para español
+        pat = r"(?:(?<=\s)|^)(" + "|".join(keys) + r")(?:(?=\s)|$)"
+        compiled[desc] = re.compile(pat)
+    return compiled
 
-def autodetect_mapping(df: pd.DataFrame) -> Optional[Dict[str, str]]:
-    """
-    Intenta detectar automáticamente las columnas del diccionario:
-    retorna {'columna': <name>, 'codigo': <name>, 'descriptor': <name>, 'categoria': <name or None>}
-    o None si no pudo.
-    """
-    cols = [c for c in df.columns]
-    norm_cols = [norm_text(c) for c in cols]
-    col_map = dict(zip(norm_cols, cols))
+def header_marked_series(s: pd.Series) -> pd.Series:
+    num = pd.to_numeric(s, errors="coerce").fillna(0) != 0
+    txt = s.astype(str).apply(norm_text)
+    mask = ~txt.isin(["", "no", "0", "nan", "none", "false"])
+    return num | mask
 
-    def pick(cands):
-        for k in cands:
-            if k in col_map:
-                return col_map[k]
-        return None
+def detect_by_headers(df_raw: pd.DataFrame) -> List[str]:
+    df = normalize_columns(df_raw)
+    hits: List[str] = []
 
-    col_col = pick(["columna", "campo", "variable"])
-    code_col = pick(["codigo", "código", "valor", "code"])
-    desc_col = pick(["descriptor", "descriptores", "descripcion", "descripción"])
-    cat_col  = pick(["categoria", "categoría", "category"])
+    # mapeo de encabezados → descriptor (por nombre)
+    desc_names = [norm_text(d) for d, _ in CATALOGO_BASE]
+    for col in df.columns:
+        ncol = norm_text(col)
+        # si el encabezado contiene el nombre de un descriptor, cuenta filas marcadas
+        for nd, (desc, _) in zip(desc_names, CATALOGO_BASE):
+            if (nd == ncol) or (nd in ncol) or (ncol in nd):
+                m = header_marked_series(df[col])
+                c = int(m.sum())
+                if c > 0:
+                    hits.extend([desc] * c)
+    return hits
 
-    if col_col and code_col and desc_col:
-        return {"columna": col_col, "codigo": code_col, "descriptor": desc_col, "categoria": cat_col}
-    return None
+def detect_by_codes(df_raw: pd.DataFrame) -> List[str]:
+    """Cuenta a partir del MAPEO_CODIGOS (columna → código)"""
+    if not MAPEO_CODIGOS:
+        return []
+    df = normalize_columns(df_raw)
+    hits: List[str] = []
+    colset = set(df.columns)
+    for col_norm, code, desc, _cat in MAPEO_CODIGOS:
+        if col_norm not in colset:
+            continue
+        s = df[col_norm]
+        # cada celda puede tener multi-valores
+        def match_value(cell) -> bool:
+            if pd.isna(cell):
+                return False
+            # num puro
+            try:
+                ncell = pd.to_numeric(cell)
+                return ncell == code
+            except Exception:
+                pass
+            parts = split_multi(str(cell))
+            if parts:
+                for p in parts:
+                    try:
+                        pn = pd.to_numeric(p)
+                        if pn == code:
+                            return True
+                    except Exception:
+                        if norm_text(p) == norm_text(str(code)):
+                            return True
+                return False
+            return norm_text(str(cell)) == norm_text(str(code))
+        c = int(s.apply(match_value).sum())
+        if c > 0:
+            hits.extend([desc] * c)
+    return hits
+
+def guess_text_columns(df: pd.DataFrame) -> List[str]:
+    hints = ["por que", "por qué", "observ", "descr", "coment", "suger", "detalle", "porque", "actividad", "insegur"]
+    cols = []
+    for col in df.columns:
+        if df[col].dtype == object or any(h in norm_text(col) for h in hints):
+            sample = df[col].astype(str).head(200).apply(norm_text)
+            if (sample != "").mean() > 0.10 or any(h in norm_text(col) for h in hints):
+                cols.append(col)
+    return cols
+
+def detect_in_text(df_raw: pd.DataFrame) -> List[str]:
+    df = normalize_columns(df_raw)
+    text_cols = guess_text_columns(df)
+    if not text_cols:
+        return []
+    regex_by_desc = build_regex_by_desc()
+    hits: List[str] = []
+    for col in text_cols:
+        col_norm = df[col].astype(str).apply(norm_text)
+        for desc, pat in regex_by_desc.items():
+            for i in range(0, len(col_norm), BLOCK_SIZE):
+                part = col_norm.iloc[i:i+BLOCK_SIZE]
+                c = int(part.str.contains(pat, na=False).sum())
+                if c > 0:
+                    hits.extend([desc] * c)
+    return hits
 
 # =========================
-# Cómputo
+# Agregación y Pareto
 # =========================
-def compute_hits_from_mapping(df_matriz: pd.DataFrame, df_map: pd.DataFrame,
-                              col_col: str, code_col: str, desc_col: str, cat_col: Optional[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Recorre df_map y cuenta coincidencias en df_matriz.
-    Devuelve (copilado, pareto)
-    """
-    header_index = build_header_index(df_matriz)
+def make_copilado(hits: List[str]) -> pd.DataFrame:
+    if not hits:
+        return pd.DataFrame({"Descriptor": [], "Frecuencia": []})
+    s = pd.Series(hits, name="Descriptor")
+    df = s.value_counts(dropna=False).rename_axis("Descriptor").reset_index(name="Frecuencia")
+    return df.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
 
-    # Normalizamos los nombres de columna destino
-    rows = []
-    for _, r in df_map.iterrows():
-        col_key_norm = norm_text(r[col_col])
-        if col_key_norm not in header_index:
-            continue
-        col_real = header_index[col_key_norm]
-        code = r[code_col]
-        desc = str(r[desc_col]).strip()
-        cat  = str(r[cat_col]).strip() if cat_col and (cat_col in df_map.columns) else ""
-        if desc == "":
-            continue
-        rows.append((col_real, code, desc, cat))
+def make_pareto(copilado_df: pd.DataFrame, cat_map: Dict[str, str]) -> pd.DataFrame:
+    if copilado_df.empty:
+        return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% Acumulado","Acumulado","80/20"])
+    df = copilado_df.copy()
+    df["Categoría"] = df["Descriptor"].map(cat_map).fillna("")
+    total = df["Frecuencia"].sum()
+    df["Porcentaje"] = (df["Frecuencia"] / total) * 100.0
+    df = df.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
+    df["% Acumulado"] = df["Porcentaje"].cumsum()
+    df["Acumulado"] = df["Frecuencia"].cumsum()
+    df["80/20"] = np.where(df["% Acumulado"] <= 80.0, "≤80%", ">80%")
+    return df[["Categoría","Descriptor","Frecuencia","Porcentaje","% Acumulado","Acumulado","80/20"]]
 
-    counts: Dict[str, int] = {}
-    cat_map: Dict[str, str] = {}
-    for col_real, code, desc, cat in rows:
-        serie = df_matriz[col_real]
-        mask = serie.apply(lambda x: match_value(x, code))
-        freq = int(mask.sum())
-        if freq > 0:
-            counts[desc] = counts.get(desc, 0) + freq
-            if desc not in cat_map:
-                cat_map[desc] = cat
-
-    # Copilado
-    if not counts:
-        copilado = pd.DataFrame({"Descriptor": [], "Frecuencia": []})
-    else:
-        copilado = (pd.DataFrame(list(counts.items()), columns=["Descriptor", "Frecuencia"])
-                    .sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True))
-
-    # Pareto
-    if copilado.empty:
-        pareto = pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% Acumulado","Acumulado","80/20"])
-    else:
-        dfp = copilado.copy()
-        dfp["Categoría"] = dfp["Descriptor"].map(cat_map).fillna("")
-        total = dfp["Frecuencia"].sum()
-        dfp["Porcentaje"] = (dfp["Frecuencia"] / total) * 100.0
-        dfp = dfp.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
-        dfp["% Acumulado"] = dfp["Porcentaje"].cumsum()
-        dfp["Acumulado"] = dfp["Frecuencia"].cumsum()
-        dfp["80/20"] = np.where(dfp["% Acumulado"] <= 80.0, "≤80%", ">80%")
-        pareto = dfp[["Categoría","Descriptor","Frecuencia","Porcentaje","% Acumulado","Acumulado","80/20"]]
-
-    return copilado, pareto
-
+# =========================
+# Exportación Excel con gráfico
+# =========================
 def export_excel(copilado: pd.DataFrame, pareto: pd.DataFrame) -> bytes:
     from pandas import ExcelWriter
-    import xlsxwriter  # noqa: F401
+    import xlsxwriter  # noqa
     out = BytesIO()
     with ExcelWriter(out, engine="xlsxwriter") as writer:
         copilado.to_excel(writer, index=False, sheet_name="Copilado Comunidad")
@@ -199,7 +320,7 @@ def export_excel(copilado: pd.DataFrame, pareto: pd.DataFrame) -> bytes:
         wb  = writer.book
         wsP = writer.sheets["Pareto Comunidad"]
         n = len(pareto)
-        if n >= 1:
+        if n:
             chart = wb.add_chart({'type': 'column'})
             chart.add_series({
                 'name': 'Frecuencia',
@@ -222,93 +343,58 @@ def export_excel(copilado: pd.DataFrame, pareto: pd.DataFrame) -> bytes:
     return out.getvalue()
 
 # =========================
-# UI
+# UI mínima (1 solo archivo)
 # =========================
-st.title("Pareto Comunidad (MSP) – Plantilla + Diccionario de Códigos")
-st.caption("La app lee **todas** las filas de `matriz`. Si el diccionario no usa encabezados esperados, puedes elegirlos manualmente.")
+st.title("Pareto Comunidad – MSP (automático)")
+archivo = st.file_uploader("📄 Subí la Plantilla (XLSX) – debe tener hoja `matriz`", type=["xlsx"])
 
-col1, col2 = st.columns([1,1])
-with col1:
-    plantilla_file = st.file_uploader("📄 Plantilla de Comunidad (XLSX, hoja `matriz`)", type=["xlsx"], key="plantilla")
-with col2:
-    mapping_file = st.file_uploader("🧭 Diccionario / Mapeo (XLSX)", type=["xlsx"], key="mapeo")
-
-if not plantilla_file or not mapping_file:
-    st.info("Sube **ambos archivos** para continuar.")
+if not archivo:
+    st.info("Subí la Plantilla para procesar.")
     st.stop()
 
-# Convertimos ambos a BYTES para cachear de forma segura y reabrir múltiples veces
-plantilla_bytes = plantilla_file.getvalue()
-mapping_bytes   = mapping_file.getvalue()
-
-# --- Plantilla ---
+# Leer TODAS las filas de 'matriz'
 try:
-    with st.spinner("Leyendo Plantilla (hoja 'matriz')…"):
-        df_matriz = read_matriz_bytes(plantilla_bytes)  # TODAS las filas
-    st.caption(f"Vista previa Plantilla (primeras 20 de {len(df_matriz)} filas)")
-    st.dataframe(df_matriz.head(20), use_container_width=True)
+    df_matriz = read_matriz(archivo.getvalue())
 except Exception as e:
-    st.error(f"Error al leer Plantilla: {e}")
+    st.error(f"Error al leer la hoja `matriz`: {e}")
     st.stop()
 
-# --- Diccionario: obtener hojas y permitir seleccionar ---
-sheet_names = get_sheet_names(mapping_bytes)
-sel_sheet = st.selectbox("Hoja del diccionario", options=sheet_names, index=0)
+st.caption(f"Vista previa (primeras 20 de {len(df_matriz)} filas)")
+st.dataframe(df_matriz.head(20), use_container_width=True)
 
-df_map_raw = read_mapping_sheet(mapping_bytes, sel_sheet)
-st.caption("Vista previa Diccionario (primeras 30 filas)")
-st.dataframe(df_map_raw.head(30), use_container_width=True)
+# Detección combinada (sin pedir nada)
+with st.spinner("Procesando y categorizando (encabezados + códigos + texto abierto)…"):
+    cat_map = build_cat_map()
+    hits = []
+    hits += detect_by_headers(df_matriz)   # encabezados
+    hits += detect_by_codes(df_matriz)     # códigos embebidos
+    hits += detect_in_text(df_matriz)      # texto abierto
+    copilado = make_copilado(hits)
+    pareto = make_pareto(copilado, cat_map)
 
-auto = autodetect_mapping(df_map_raw)
-
-st.markdown("### Selección de columnas del diccionario")
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    col_col = st.selectbox("Columna (en 'matriz')", options=list(df_map_raw.columns),
-                           index=(list(df_map_raw.columns).index(auto["columna"]) if auto else 0))
-with c2:
-    code_col = st.selectbox("Código/Valor", options=list(df_map_raw.columns),
-                            index=(list(df_map_raw.columns).index(auto["codigo"]) if auto else 1))
-with c3:
-    desc_col = st.selectbox("Descriptor", options=list(df_map_raw.columns),
-                            index=(list(df_map_raw.columns).index(auto["descriptor"]) if auto else 2))
-with c4:
-    cat_col  = st.selectbox("Categoría (opcional)", options=["(ninguna)"] + list(df_map_raw.columns),
-                            index=((["(ninguna)"] + list(df_map_raw.columns)).index(auto["categoria"])
-                                   if (auto and auto["categoria"] in df_map_raw.columns) else 0))
-cat_col_real = None if cat_col == "(ninguna)" else cat_col
-
-st.divider()
-go_btn = st.button("Procesar")
-
-if not go_btn:
-    st.stop()
-
-with st.spinner("Procesando (conteo por códigos sobre todas las filas)…"):
-    copilado_df, pareto_df = compute_hits_from_mapping(df_matriz, df_map_raw, col_col, code_col, desc_col, cat_col_real)
-
-if copilado_df.empty:
-    st.warning("No se detectaron coincidencias. Verifica que 'Columna' coincida con un encabezado de `matriz` y que 'Código' corresponda a los valores reales.")
+if copilado.empty:
+    st.warning("No se detectaron descriptores con el catálogo/mapeo base. Si tu formulario usa otros nombres/códigos, dímelos y los dejo embebidos.")
     st.stop()
 
 st.subheader("Copilado Comunidad")
-st.dataframe(copilado_df, use_container_width=True)
+st.dataframe(copilado, use_container_width=True)
 
 st.subheader("Pareto Comunidad")
-st.dataframe(pareto_df, use_container_width=True)
+st.dataframe(pareto, use_container_width=True)
 
-st.subheader("Gráficos")
-plot_df = pareto_df.head(TOP_N_GRAFICO).copy()
+st.subheader("Gráfico Pareto")
+plot_df = pareto.head(TOP_N_GRAFICO).copy()
 st.bar_chart(plot_df.set_index("Descriptor")["Frecuencia"])
 st.line_chart(plot_df.set_index("Descriptor")["% Acumulado"])
 
 st.subheader("Descargar Excel")
 st.download_button(
-    "⬇️ Copilado + Pareto + Gráfico",
-    data=export_excel(copilado_df, pareto_df),
+    "⬇️ Copilado + Pareto + gráfico",
+    data=export_excel(copilado, pareto),
     file_name="Pareto_Comunidad.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
 
 
 
