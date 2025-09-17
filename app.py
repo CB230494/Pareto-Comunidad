@@ -1,5 +1,5 @@
 # =========================
-# Pareto Comunidad – MSP (con selector de columnas del diccionario)
+# Pareto Comunidad – MSP (Plantilla + Diccionario, fix cache serializable)
 # =========================
 
 import re
@@ -87,17 +87,23 @@ def match_value(cell, code) -> bool:
     return any((not isinstance(ci, (int, float)) and nt == ci) for ci in code_items)
 
 # =========================
-# Lectura
+# Lectura (cacheando SOLO datos serializables)
 # =========================
 @st.cache_data(show_spinner=False)
-def read_matriz(file) -> pd.DataFrame:
-    # Usa TODAS las filas de 'matriz' (la preview luego muestra solo head(20))
-    return pd.read_excel(file, sheet_name="matriz", engine="openpyxl")
+def read_matriz_bytes(file_bytes: bytes) -> pd.DataFrame:
+    # Usa TODAS las filas de 'matriz'
+    return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
 
 @st.cache_data(show_spinner=False)
-def read_xls(file) -> Tuple[pd.ExcelFile, List[str]]:
-    xls = pd.ExcelFile(file)
-    return xls, xls.sheet_names
+def get_sheet_names(file_bytes: bytes) -> List[str]:
+    # Devuelvo SOLO la lista de hojas (serializable)
+    xls = pd.ExcelFile(BytesIO(file_bytes))
+    return xls.sheet_names
+
+@st.cache_data(show_spinner=False)
+def read_mapping_sheet(file_bytes: bytes, sheet_name: str) -> pd.DataFrame:
+    # Leo una hoja específica del diccionario desde bytes
+    return pd.read_excel(BytesIO(file_bytes), sheet_name=sheet_name, engine="openpyxl")
 
 def autodetect_mapping(df: pd.DataFrame) -> Optional[Dict[str, str]]:
     """
@@ -219,7 +225,7 @@ def export_excel(copilado: pd.DataFrame, pareto: pd.DataFrame) -> bytes:
 # UI
 # =========================
 st.title("Pareto Comunidad (MSP) – Plantilla + Diccionario de Códigos")
-st.caption("La app lee **todas** las filas de `matriz`. Si el diccionario no usa los encabezados esperados, podrás elegirlos manualmente.")
+st.caption("La app lee **todas** las filas de `matriz`. Si el diccionario no usa encabezados esperados, puedes elegirlos manualmente.")
 
 col1, col2 = st.columns([1,1])
 with col1:
@@ -231,21 +237,25 @@ if not plantilla_file or not mapping_file:
     st.info("Sube **ambos archivos** para continuar.")
     st.stop()
 
+# Convertimos ambos a BYTES para cachear de forma segura y reabrir múltiples veces
+plantilla_bytes = plantilla_file.getvalue()
+mapping_bytes   = mapping_file.getvalue()
+
 # --- Plantilla ---
 try:
     with st.spinner("Leyendo Plantilla (hoja 'matriz')…"):
-        df_matriz = read_matriz(plantilla_file)  # TODAS las filas se usan
+        df_matriz = read_matriz_bytes(plantilla_bytes)  # TODAS las filas
     st.caption(f"Vista previa Plantilla (primeras 20 de {len(df_matriz)} filas)")
     st.dataframe(df_matriz.head(20), use_container_width=True)
 except Exception as e:
     st.error(f"Error al leer Plantilla: {e}")
     st.stop()
 
-# --- Diccionario: elegir hoja y columnas si hace falta ---
-xls, sheet_names = read_xls(mapping_file)
+# --- Diccionario: obtener hojas y permitir seleccionar ---
+sheet_names = get_sheet_names(mapping_bytes)
 sel_sheet = st.selectbox("Hoja del diccionario", options=sheet_names, index=0)
 
-df_map_raw = pd.read_excel(mapping_file, sheet_name=sel_sheet, engine="openpyxl")
+df_map_raw = read_mapping_sheet(mapping_bytes, sel_sheet)
 st.caption("Vista previa Diccionario (primeras 30 filas)")
 st.dataframe(df_map_raw.head(30), use_container_width=True)
 
@@ -254,15 +264,18 @@ auto = autodetect_mapping(df_map_raw)
 st.markdown("### Selección de columnas del diccionario")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    col_col = st.selectbox("Columna (en 'matriz')", options=list(df_map_raw.columns), index=list(df_map_raw.columns).index(auto["columna"]) if auto else 0)
+    col_col = st.selectbox("Columna (en 'matriz')", options=list(df_map_raw.columns),
+                           index=(list(df_map_raw.columns).index(auto["columna"]) if auto else 0))
 with c2:
-    code_col = st.selectbox("Código/Valor", options=list(df_map_raw.columns), index=list(df_map_raw.columns).index(auto["codigo"]) if auto else 1)
+    code_col = st.selectbox("Código/Valor", options=list(df_map_raw.columns),
+                            index=(list(df_map_raw.columns).index(auto["codigo"]) if auto else 1))
 with c3:
-    desc_col = st.selectbox("Descriptor", options=list(df_map_raw.columns), index=list(df_map_raw.columns).index(auto["descriptor"]) if auto else 2)
+    desc_col = st.selectbox("Descriptor", options=list(df_map_raw.columns),
+                            index=(list(df_map_raw.columns).index(auto["descriptor"]) if auto else 2))
 with c4:
     cat_col  = st.selectbox("Categoría (opcional)", options=["(ninguna)"] + list(df_map_raw.columns),
-                             index=(["(ninguna)"] + list(df_map_raw.columns)).index(auto["categoria"]) if (auto and auto["categoria"] in df_map_raw.columns) else 0)
-
+                            index=((["(ninguna)"] + list(df_map_raw.columns)).index(auto["categoria"])
+                                   if (auto and auto["categoria"] in df_map_raw.columns) else 0))
 cat_col_real = None if cat_col == "(ninguna)" else cat_col
 
 st.divider()
@@ -296,5 +309,6 @@ st.download_button(
     file_name="Pareto_Comunidad.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
 
 
