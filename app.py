@@ -1,4 +1,4 @@
-# Pareto Comunidad – MSP (automático, 1 archivo, export con línea vertical 80%)
+# Pareto Comunidad – MSP (1 archivo, formato idéntico a tu ejemplo)
 
 import re
 import unicodedata
@@ -10,7 +10,7 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide", initial_sidebar_state="collapsed")
-TOP_N_GRAFICO = 50
+TOP_N_GRAFICO = 60  # solo para la vista rápida en la web
 
 # ---------- Normalización ----------
 def strip_accents(s: str) -> str:
@@ -40,9 +40,10 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def read_matriz(file_bytes: bytes) -> pd.DataFrame:
+    # Usa TODAS las filas
     return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
 
-# ---------- Catálogo + sinónimos (puedes ampliar) ----------
+# ---------- Catálogo + sinónimos (ajústalo si ocupas) ----------
 CATEGORIA_POR_DESCRIPTOR: Dict[str, str] = {
     "Consumo de drogas": "DROGAS",
     "Venta de drogas": "DROGAS",
@@ -102,7 +103,7 @@ CATEGORIA_POR_DESCRIPTOR: Dict[str, str] = {
 }
 
 SINONIMOS: Dict[str, List[str]] = {
-    "Consumo de drogas": ["consumo de drogas", "consumen drogas", "fumando piedra", "consumo marihuana"],
+    "Consumo de drogas": ["consumo de drogas", "consumen drogas", "consumo marihuana", "fumando piedra"],
     "Venta de drogas": ["venta de drogas", "punto de venta", "narcomenudeo"],
     "Hurto": ["hurto", "sustraccion"],
     "Robo a personas": ["robo a personas", "asalto a persona", "atraco a persona"],
@@ -115,9 +116,9 @@ SINONIMOS: Dict[str, List[str]] = {
     "Robo a vivienda (Intimidación)": ["robo a vivienda intimidacion", "asalto a vivienda"],
     "Disturbios(Riñas)": ["disturbios", "riñas", "riña", "peleas"],
     "Robo a vehículos (Tacha)": ["robo a vehiculos tacha"],
-    "Robo a vehiculos": ["robo a vehiculos", "robo carro", "robo moto"],
+    "Robo a vehiculos": ["robo de vehiculos", "robo carro", "robo moto"],
     "Robo a comercio (Intimidación)": ["robo a comercio intimidacion", "asalto a comercio"],
-    "Daños/Vandalismo": ["danos", "vandalismo", "grafiti", "daño a la propiedad", "destruccion"],
+    "Daños/Vandalismo": ["danos", "vandalismo", "grafiti", "daño a la propiedad"],
     "Robo de vehículos": ["robo de vehiculos"],
     "Personas en situación de calle.": ["personas en situacion de calle", "indigencia", "habitantes de calle"],
     "Personas con exceso de tiempo de ocio": ["exceso de tiempo de ocio", "ocio juvenil"],
@@ -169,18 +170,17 @@ def header_marked_series(s: pd.Series) -> pd.Series:
 def build_regex_by_desc() -> Dict[str, re.Pattern]:
     compiled = {}
     for desc, keys in SINONIMOS.items():
-        tokens = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
-        if not tokens:
-            tokens = [re.escape(norm_text(desc))]
-        pat = r"(?:(?<=\s)|^)(" + "|".join(tokens) + r")(?:(?=\s)|$)"
+        toks = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
+        if not toks:
+            toks = [re.escape(norm_text(desc))]
+        pat = r"(?:(?<=\s)|^)(" + "|".join(toks) + r")(?:(?=\s)|$)"
         compiled[desc] = re.compile(pat)
     return compiled
 
 def detect_by_headers(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
     counts = {d: 0 for d in CATEGORIA_POR_DESCRIPTOR.keys()}
-    cols = list(df_norm.columns)
     for desc, pat in regex_by_desc.items():
-        hit_cols = [c for c in cols if re.search(pat, " " + c + " ") is not None]
+        hit_cols = [c for c in df_norm.columns if re.search(pat, " " + c + " ") is not None]
         if not hit_cols:
             continue
         mask_any = None
@@ -228,78 +228,74 @@ def build_copilado(counts_headers: Dict[str, int], counts_text: Dict[str, int]) 
 
 def build_pareto(copilado: pd.DataFrame) -> pd.DataFrame:
     if copilado.empty:
-        return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% Acumulado","Acumulado","80/20"])
+        return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"])
     df = copilado.copy()
     df["Categoría"] = df["Descriptor"].map(CATEGORIA_POR_DESCRIPTOR).fillna("")
     total = df["Frecuencia"].sum()
     df["Porcentaje"] = (df["Frecuencia"] / total) * 100.0
     df = df.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
-    df["% Acumulado"] = df["Porcentaje"].cumsum()
-    df["Acumulado"] = df["Frecuencia"].cumsum()
-    df["80/20"] = np.where(df["% Acumulado"] <= 80.0, "≤80%", ">80%")
-    return df[["Categoría","Descriptor","Frecuencia","Porcentaje","% Acumulado","Acumulado","80/20"]]
+    df["% acumulado"] = df["Porcentaje"].cumsum()
+    df["Acumulado"]   = df["Frecuencia"].cumsum()
+    df["80/20"]       = np.where(df["% acumulado"] <= 80.0, "80%", "80%")
+    return df[["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"]]
 
-# ---------- Export Excel (con línea vertical 80%) ----------
-def export_excel(copilado: pd.DataFrame, pareto: pd.DataFrame) -> bytes:
+# ---------- Export Excel (estilo idéntico) ----------
+def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> bytes:
     from pandas import ExcelWriter
     import xlsxwriter  # noqa: F401
 
     out = BytesIO()
     with ExcelWriter(out, engine="xlsxwriter") as writer:
-        # Hojas
-        copilado.to_excel(writer, index=False, sheet_name="Copilado Comunidad")
+        # hoja principal
         pareto.to_excel(writer, index=False, sheet_name="Pareto Comunidad")
-
-        wb  = writer.book
-        ws  = writer.sheets["Pareto Comunidad"]
+        wb = writer.book
+        ws = writer.sheets["Pareto Comunidad"]
 
         n = len(pareto)
         if not n:
             return out.getvalue()
 
-        # Formatos
-        fmt_pct   = wb.add_format({"num_format": "0.00%", "align": "center"})
-        fmt_int   = wb.add_format({"num_format": "0", "align": "center"})
-        fmt_head  = wb.add_format({"bold": True, "align": "center", "bg_color": "#D9E1F2"})
-        fmt_yellow= wb.add_format({"bg_color": "#FFF2CC"})
-        fmt_center= wb.add_format({"align": "center"})
+        # formatos
+        fmt_head = wb.add_format({"bold": True, "align": "center", "bg_color": "#D9E1F2", "border": 1})
+        fmt_pct  = wb.add_format({"num_format": "0.00%", "align": "center", "border": 1})
+        fmt_int  = wb.add_format({"num_format": "0", "align": "center", "border": 1})
+        fmt_txt  = wb.add_format({"align": "left", "border": 1})
+        fmt_yel  = wb.add_format({"bg_color": "#FFF2CC"})
+        fmt_center = wb.add_format({"align": "center"})
 
-        # Encabezados centrados y porcentajes
-        for c in range(8):  # A..H
-            ws.set_row(0, None, fmt_head)
-        ws.set_column("A:A", 22)
-        ws.set_column("B:B", 42)
-        ws.set_column("C:C", 12, fmt_int)
-        ws.set_column("D:D", 12, fmt_pct)  # Porcentaje
-        ws.set_column("E:E", 12, fmt_pct)  # % Acumulado
-        ws.set_column("F:F", 12, fmt_int)
-        ws.set_column("G:G", 8,  fmt_center)
+        # anchos + encabezados
+        ws.set_column("A:A", 22, fmt_txt)   # Categoría
+        ws.set_column("B:B", 50, fmt_txt)   # Descriptor
+        ws.set_column("C:C", 12, fmt_int)   # Frecuencia
+        ws.set_column("D:D", 12, fmt_pct)   # Porcentaje
+        ws.set_column("E:E", 12, fmt_pct)   # % acumulado
+        ws.set_column("F:F", 12, fmt_int)   # Acumulado
+        ws.set_column("G:G", 8,  fmt_center)# 80/20
 
-        # Pintar <=80% en amarillo
-        cutoff_idx = int((pareto["% Acumulado"] <= 80).sum())  # filas (1..k) cumplen
+        # encabezado con fondo
+        ws.set_row(0, None, fmt_head)
+
+        # pintar <=80% en amarillo
+        cutoff_idx = int((pareto["% acumulado"] <= 80).sum())
         if cutoff_idx > 0:
-            ws.conditional_format(1, 0, cutoff_idx, 7, {"type": "no_blanks", "format": fmt_yellow})
+            ws.conditional_format(1, 0, cutoff_idx, 6, {"type": "no_blanks", "format": fmt_yel})
 
-        # --- Datos auxiliares para líneas en el gráfico ---
-        # Horizontal 80%: una serie constante al 80
-        ws.write(0, 9, "Const 80%")  # J1
+        # columnas auxiliares para líneas
+        # J: constante 80% (para línea horizontal gris)
+        ws.write(0, 9, "80/20")
         for i in range(n):
-            ws.write(i+1, 9, 0.8)
+            ws.write_number(i+1, 9, 0.80)
 
-        # Vertical 80%: dos puntos (0% y 100%) en la categoría de corte
-        # los ponemos en K y L (categoría y valor)
-        ws.write(0, 10, "Corte X")   # K1
-        ws.write(0, 11, "Corte Y")   # L1
-        corte_cat_row = cutoff_idx if cutoff_idx >= 1 else 1
-        # categorías iguales en dos filas -> línea vertical
-        ws.write(1, 10, pareto.iloc[corte_cat_row-1, 1])  # Descriptor
-        ws.write(2, 10, pareto.iloc[corte_cat_row-1, 1])  # Descriptor
-        ws.write(1, 11, 0.0)
-        ws.write(2, 11, 1.0)
+        # K-L: dos puntos para línea vertical roja
+        ws.write(0,10,"CorteX"); ws.write(0,11,"%")
+        corte_row = max(1, cutoff_idx)  # al menos 1
+        xcat = pareto.iloc[corte_row-1]["Descriptor"]
+        ws.write(1,10, xcat); ws.write(2,10, xcat)
+        ws.write_number(1,11, 0.0); ws.write_number(2,11, 1.0)
 
-        # --- Gráfico ---
+        # gráfico tipo Excel
         chart = wb.add_chart({'type': 'column'})
-        # Colorear barras por punto (amarillas hasta corte)
+        # barras coloreadas: azules hasta corte, grises después
         points = [{"fill": {"color": "#5B9BD5"}} for _ in range(n)]
         for i in range(cutoff_idx, n):
             points[i] = {"fill": {"color": "#A6A6A6"}}
@@ -311,53 +307,52 @@ def export_excel(copilado: pd.DataFrame, pareto: pd.DataFrame) -> bytes:
             'points': points,
         })
 
-        # Línea % acumulado (eje secundario)
-        line = wb.add_chart({'type': 'line'})
-        line.add_series({
-            'name': '% Acumulado',
+        linea = wb.add_chart({'type': 'line'})
+        linea.add_series({
+            'name': '% acumulado',
             'categories': ['Pareto Comunidad', 1, 1, n, 1],
             'values':     ['Pareto Comunidad', 1, 4, n, 4],  # E
             'y2_axis': True,
         })
-        chart.combine(line)
+        chart.combine(linea)
 
-        # Línea horizontal 80%
-        line80 = wb.add_chart({'type': 'line'})
-        line80.add_series({
-            'name': '80%',
+        horiz = wb.add_chart({'type': 'line'})
+        horiz.add_series({
+            'name': '80/20',
             'categories': ['Pareto Comunidad', 1, 1, n, 1],
             'values':     ['Pareto Comunidad', 1, 9, n, 9],  # J
             'y2_axis': True,
         })
-        chart.combine(line80)
+        chart.combine(horiz)
 
-        # Línea vertical (dos puntos con la misma categoría)
         vline = wb.add_chart({'type': 'line'})
         vline.add_series({
-            'name': 'Corte 80%',
-            'categories': ['Pareto Comunidad', 1, 10, 2, 10],  # K2:K3 (misma categoría)
-            'values':     ['Pareto Comunidad', 1, 11, 2, 11],  # L2:L3 -> 0 a 1
+            'name': '',
+            'categories': ['Pareto Comunidad', 1, 10, 2, 10],  # K2:K3
+            'values':     ['Pareto Comunidad', 1, 11, 2, 11],  # L2:L3
             'y2_axis': True,
+            'line': {'color': '#C00000', 'width': 2.25},     # rojo
         })
         chart.combine(vline)
 
-        chart.set_title({'name': 'Pareto Comunidad'})
-        chart.set_x_axis({'name': 'Descriptor'})
-        chart.set_y_axis({'name': 'Frecuencia'})
-        chart.set_y2_axis({'name': '% Acumulado', 'min': 0, 'max': 1, 'major_unit': 0.1, 'num_format': '0%'})
+        chart.set_title({'name': titulo.upper()})
+        chart.set_x_axis({'name': '', 'num_font': {'rotation': -45}})
+        chart.set_y_axis({'name': '', 'major_gridlines': {'visible': False}})
+        chart.set_y2_axis({'name': '', 'min': 0, 'max': 1, 'major_unit': 0.1, 'num_format': '0%'})
+        chart.set_legend({'position': 'bottom'})
 
         ws.insert_chart(1, 9, chart, {'x_scale': 1.35, 'y_scale': 1.35})
 
     return out.getvalue()
 
-# ---------- UI ----------
-st.title("Pareto Comunidad – MSP (automático, con corte 80% marcado)")
+# ---------- UI mínima ----------
+st.title("Pareto Comunidad – MSP (idéntico al formato)")
 archivo = st.file_uploader("📄 Subí la Plantilla (XLSX) – hoja `matriz`", type=["xlsx"])
 if not archivo:
     st.info("Subí la Plantilla para procesar.")
     st.stop()
 
-# Leer todas las filas y normalizar columnas
+# Leer y normalizar columnas (todas las filas)
 try:
     df_raw = read_matriz(archivo.getvalue())
 except Exception as e:
@@ -368,35 +363,48 @@ df = normalize_columns(df_raw)
 st.caption(f"Vista previa (primeras 20 de {len(df)} filas)")
 st.dataframe(df.head(20), use_container_width=True)
 
-# Detección combinada
+# Detección combinada (encabezados + texto)
+def build_regex_all():
+    compiled = {}
+    for d in CATEGORIA_POR_DESCRIPTOR:
+        keys = SINONIMOS.get(d, []) + [d]
+        toks = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
+        compiled[d] = re.compile(r"(?:(?<=\s)|^)(" + "|".join(toks) + r")(?:(?=\s)|$)")
+    return compiled
+
 with st.spinner("Procesando (encabezados + texto abierto)…"):
-    regex_by_desc = build_regex_by_desc()
-    counts_headers = detect_by_headers(df, regex_by_desc)
-    counts_text    = detect_in_text(df, regex_by_desc)
-    copilado = build_copilado(counts_headers, counts_text)
+    regex = build_regex_all()
+    counts_h = detect_by_headers(df, regex)
+    counts_t = detect_in_text(df, regex)
+    copilado = build_copilado(counts_h, counts_t)
     pareto   = build_pareto(copilado)
 
 if copilado.empty:
-    st.warning("No se detectaron descriptores. Ajusta/añade sinónimos si tu formulario usa otros términos.")
+    st.warning("No se detectaron descriptores con el catálogo actual.")
     st.stop()
 
-st.subheader("Copilado Comunidad")
-st.dataframe(copilado, use_container_width=True)
-
-st.subheader("Pareto Comunidad")
+st.subheader("Pareto Comunidad (tabla)")
 st.dataframe(pareto, use_container_width=True)
 
-st.subheader("Gráfico (vista rápida)")
+# Vista rápida (web)
 plot_df = pareto.head(TOP_N_GRAFICO).copy()
-st.bar_chart(plot_df.set_index("Descriptor")["Frecuencia"])
-st.line_chart(plot_df.set_index("Descriptor")["% Acumulado"])
+c1, c2 = st.columns([1,1.2])
+with c1:
+    st.subheader("Top (vista rápida)")
+    st.dataframe(plot_df, use_container_width=True)
+with c2:
+    st.subheader("Gráfico (rápido)")
+    st.bar_chart(plot_df.set_index("Descriptor")["Frecuencia"])
+    st.line_chart(plot_df.set_index("Descriptor")["% acumulado"])
 
-st.subheader("Descargar Excel (con gráfico y corte 80%)")
+# Descarga Excel con gráfico idéntico
+st.subheader("Descargar Excel final")
 st.download_button(
-    "⬇️ Copilado + Pareto + gráfico",
-    data=export_excel(copilado, pareto),
+    "⬇️ Pareto Comunidad (Excel con formato y gráfico)",
+    data=export_excel(pareto, titulo="PARETO COMUNIDAD"),
     file_name="Pareto_Comunidad.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
 
 
