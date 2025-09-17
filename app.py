@@ -1,18 +1,23 @@
 # =========================
-# 📊 Pareto Comunidad – MSP (optimizado)
+# 📊 Pareto Comunidad – MSP (1 solo archivo, catálogo embebido)
 # =========================
 # Flujo:
-# 1) Subir Plantilla de Comunidad (hoja 'matriz') y Descriptores (hoja 'Descriptores (ACTUALIZADOS)')
-# 2) Generar 'Copilado Comunidad' (Descriptor, Frecuencia)
-# 3) Generar 'Pareto Comunidad' (Categoría, Descriptor, Frecuencia, Porcentaje, % Acumulado, Acumulado, 80/20)
-# 4) Ver gráfico (barras + línea) con corte al 80% y descargar Excel con todo y gráfico
+# 1) Subir Plantilla de Comunidad (hoja 'matriz').
+# 2) Generar 'Copilado Comunidad' (Descriptor, Frecuencia) con catálogo embebido.
+# 3) Generar 'Pareto Comunidad' (Categoría, Descriptor, Frecuencia, Porcentaje, % Acumulado, Acumulado, 80/20).
+# 4) Ver gráfico (barras + línea) con corte al 80% y descargar Excel con todo y gráfico.
 #
 # Optimización:
-# - La UI pinta de inmediato (no procesa nada hasta que subes ambos archivos).
+# - UI pinta de inmediato; no procesa hasta que subes el archivo.
 # - Preview limitada (para no colgar el frontend).
 # - Matching por encabezado rápido; escaneo profundo de texto solo si lo activas (toggle).
 # - Escaneo profundo vectorizado con regex y por bloques.
-# - Gráfico limitado a TOP_N_GRAFICO (la descarga incluye TODOS).
+# - Gráfico limitado a TOP_N_GRAFICO (descarga incluye TODOS).
+#
+# Catálogo:
+# - Incluye un catálogo de ejemplo embebido basado en descriptores típicos (puedes ampliarlo en la UI).
+# - Formato de pegado: NOMBRE CORTO,CATEGORÍA,DESCRIPTOR
+#   (una fila por línea, sin encabezados).
 
 import io
 from io import BytesIO
@@ -29,7 +34,50 @@ st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide")
 TOP_N_GRAFICO = 40  # limitar gráfico para no hacerlo pesado (la descarga incluye todos)
 
 # -------------------------
-# Utilidades de normalización (sin Unidecode)
+# Catálogo embebido (ejemplo ampliable)
+# -------------------------
+CATALOGO_BASE = [
+    # NOMBRE CORTO, CATEGORÍA, DESCRIPTOR
+    ("HURTO", "DELITOS CONTRA LA PROPIEDAD", "HURTO"),
+    ("ROBO", "DELITOS CONTRA LA PROPIEDAD", "ROBO"),
+    ("DAÑOS A LA PROPIEDAD", "DELITOS CONTRA LA PROPIEDAD", "DAÑOS A LA PROPIEDAD"),
+    ("ASALTO", "DELITOS CONTRA LA PROPIEDAD", "ASALTO"),
+    ("TENTATIVA DE ROBO", "DELITOS CONTRA LA PROPIEDAD", "TENTATIVA DE ROBO"),
+
+    ("VENTA DE DROGAS", "DROGAS", "VENTA DE DROGAS"),
+    ("TRÁFICO DE DROGAS", "DROGAS", "TRÁFICO DE DROGAS"),
+    ("MICROTRÁFICO", "DROGAS", "MICROTRÁFICO"),
+    ("CONSUMO DE DROGAS", "DROGAS", "CONSUMO DE DROGAS"),
+    ("BÚNKER", "DROGAS", "BÚNKER"),
+    ("PUNTO DE VENTA", "DROGAS", "PUNTO DE VENTA"),
+    ("CONSUMO DE ALCOHOL", "ALCOHOL", "CONSUMO DE ALCOHOL EN VÍA PÚBLICA"),
+    ("LICORES", "ALCOHOL", "CONSUMO DE ALCOHOL EN VÍA PÚBLICA"),
+
+    ("HOMICIDIOS", "DELITOS CONTRA LA VIDA", "HOMICIDIOS"),
+    ("HERIDOS", "DELITOS CONTRA LA VIDA", "HERIDOS"),
+    ("TENTATIVA DE HOMICIDIO", "DELITOS CONTRA LA VIDA", "TENTATIVA DE HOMICIDIO"),
+
+    ("VIOLENCIA DOMÉSTICA", "VIOLENCIA", "VIOLENCIA DOMÉSTICA"),
+    ("VIOLENCIA INTRAFAMILIAR", "VIOLENCIA", "VIOLENCIA DOMÉSTICA"),
+    ("AGRESIÓN", "VIOLENCIA", "AGRESIÓN"),
+    ("ABUSO SEXUAL", "VIOLENCIA", "ABUSO SEXUAL"),
+    ("VIOLACIÓN", "VIOLENCIA", "VIOLACIÓN"),
+    ("ACOSO SEXUAL CALLEJERO", "RIESGO SOCIAL", "ACOSO SEXUAL CALLEJERO"),
+    ("ACOSO ESCOLAR", "RIESGO SOCIAL", "ACOSO ESCOLAR (BULLYING)"),
+    ("ACTOS OBSCENOS", "RIESGO SOCIAL", "ACTOS OBSCENOS EN VIA PUBLICA"),
+
+    ("PANDILLAS", "ORDEN PÚBLICO", "PANDILLAS"),
+    ("VAGANCIA", "ORDEN PÚBLICO", "VAGANCIA"),
+    ("INDIGENCIA", "ORDEN PÚBLICO", "INDIGENCIA"),
+    ("RUIDO", "ORDEN PÚBLICO", "CONTAMINACIÓN SONORA"),
+    ("CARRERA ILEGAL", "ORDEN PÚBLICO", "CARRERAS ILEGALES"),
+    ("ARMAS BLANCAS", "ORDEN PÚBLICO", "PORTACIÓN DE ARMA BLANCA"),
+
+    # Puedes seguir ampliando...
+]
+
+# -------------------------
+# Utilidades de normalización
 # -------------------------
 def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFKD", s)
@@ -66,64 +114,63 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df2
 
 # -------------------------
-# Carga de archivos
+# Carga de archivos + UI
 # -------------------------
-st.title("Pareto Comunidad (MSP)")
+st.title("Pareto Comunidad (MSP) – 1 archivo")
 
 with st.expander("Instrucciones", expanded=True):
-    st.markdown("""
-1. **Sube los archivos**:
-   - **Plantilla de Comunidad** (hoja `matriz`)
-   - **Descriptores (ACTUALIZADOS)** (hoja `Descriptores (ACTUALIZADOS)`)
+    st.markdown(f"""
+1. **Sube la Plantilla de Comunidad** (hoja `matriz`).
+2. (Opcional) **Amplía el catálogo** pegando filas en el apartado de abajo (formato: `NOMBRE CORTO,CATEGORÍA,DESCRIPTOR`).
+3. Genera el **Copilado** y luego el **Pareto**.  
+4. Descarga el **Excel** con hojas y **gráfico embebido**.
 
-2. **Genera el Copilado** (Descriptor, Frecuencia).  
-3. **Genera el Pareto** con: Categoría, Descriptor, Frecuencia, Porcentaje, % Acumulado, Acumulado, 80/20.  
-4. **Descarga el Excel** con ambas hojas + gráfico embebido.  
-
-> Consejos de rendimiento:
-> - Activa el **escaneo profundo** solo si lo necesitas (es más lento).
-> - El gráfico muestra **top {TOP_N_GRAFICO}**; la descarga incluye **todo**.
+> El gráfico muestra **top {TOP_N_GRAFICO}** para rendimiento; la descarga incluye **todos**.
 """)
 
-col_up1, col_up2 = st.columns(2)
-with col_up1:
-    plantilla_file = st.file_uploader("📄 Plantilla de Comunidad (XLSX)", type=["xlsx"], key="plantilla")
-with col_up2:
-    desc_file = st.file_uploader("📚 Descriptores (ACTUALIZADOS) (XLSX)", type=["xlsx"], key="desc")
-
+plantilla_file = st.file_uploader("📄 Plantilla de Comunidad (XLSX) – hoja 'matriz'", type=["xlsx"], key="plantilla")
 st.divider()
 
+# --------- Catálogo embebido + pegado opcional ----------
+with st.expander("➕ Ampliar/actualizar catálogo (pegar líneas CSV)", expanded=False):
+    st.markdown("Formato por línea: `NOMBRE CORTO,CATEGORÍA,DESCRIPTOR` (sin encabezados).")
+    pasted = st.text_area("Pega aquí (opcional):", height=160, placeholder="EJEMPLO:\nHURTO,DELITOS CONTRA LA PROPIEDAD,HURTO\nVENTA DE DROGAS,DROGAS,VENTA DE DROGAS")
+    def parse_pasted(text: str) -> List[Tuple[str,str,str]]:
+        rows = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 3:
+                continue
+            nc, cat, desc = parts[0], parts[1], ",".join(parts[2:]).strip()
+            rows.append((nc, cat, desc))
+        return rows
+    pasted_rows = parse_pasted(pasted) if pasted else []
+
 # -------------------------
-# Lectura segura de hojas
+# Lectura segura de la plantilla
 # -------------------------
 @st.cache_data(show_spinner=False)
 def read_plantilla_matriz(file) -> pd.DataFrame:
     # Leemos completo; preview se hace limitada en la UI
     return pd.read_excel(file, sheet_name="matriz", engine="openpyxl")
 
-@st.cache_data(show_spinner=False)
-def read_desc(file) -> pd.DataFrame:
-    # Esperado: NOMBRE CORTO, CATEGORÍA, DESCRIPTOR, DESCRIPCIÓN
-    df = pd.read_excel(file, sheet_name="Descriptores (ACTUALIZADOS)", engine="openpyxl")
-    # Limpieza de encabezados
-    df.columns = [str(c).strip() for c in df.columns]
-    # Renombrar variantes comunes si llegan distintas
-    ren = {
-        "CATEGORIA": "CATEGORÍA",
-        "DESCRIPTORES": "DESCRIPTOR",
-        "NOMBRE CORTO": "NOMBRE CORTO",
-    }
-    for k, v in ren.items():
-        if k in df.columns and v not in df.columns:
-            df = df.rename(columns={k: v})
-    # Chequeo mínimo
-    needed = {"NOMBRE CORTO", "CATEGORÍA", "DESCRIPTOR"}
-    miss = [c for c in needed if c not in df.columns]
-    if miss:
-        raise ValueError(f"Faltan columnas en Descriptores (ACTUALIZADOS): {miss}")
-    # Filas válidas
-    df = df.dropna(subset=["DESCRIPTOR"]).copy()
-    return df
+# -------------------------
+# Construcción del catálogo (embebido + opcional pegado)
+# -------------------------
+def build_catalogo_df() -> pd.DataFrame:
+    base = pd.DataFrame(CATALOGO_BASE, columns=["NOMBRE CORTO", "CATEGORÍA", "DESCRIPTOR"])
+    if pasted_rows:
+        extra = pd.DataFrame(pasted_rows, columns=["NOMBRE CORTO", "CATEGORÍA", "DESCRIPTOR"])
+        # Concatenar y deduplicar por DESCRIPTOR (priorizamos últimas filas pegadas)
+        cat_df = pd.concat([base, extra], ignore_index=True)
+        cat_df = cat_df.dropna(subset=["DESCRIPTOR"])
+        cat_df = cat_df.drop_duplicates(subset=["DESCRIPTOR"], keep="last")
+        return cat_df
+    else:
+        return base
 
 def build_keyword_maps(desc_df: pd.DataFrame) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
     """
@@ -147,7 +194,7 @@ def build_keyword_maps(desc_df: pd.DataFrame) -> Tuple[Dict[str, str], Dict[str,
     return by_desc_norm, by_nc_norm, cat_by_desc
 
 # -------------------------
-# Extracción de descriptores desde la plantilla (rápido + profundo opcional)
+# Extracción de descriptores (rápido + profundo opcional)
 # -------------------------
 def detect_descriptors_from_dataframe(df_raw: pd.DataFrame,
                                       by_desc_norm: Dict[str, str],
@@ -185,7 +232,6 @@ def detect_descriptors_from_dataframe(df_raw: pd.DataFrame,
         numeric_mask = pd.to_numeric(s2, errors="coerce").fillna(0) != 0
         # texto
         txt = s2.astype(str).str.strip().str.lower()
-        # quitar tildes en texto
         txt = txt.apply(strip_accents)
         text_mask = ~txt.isin(["", "no", "0", "nan", "none", "false"])
         return numeric_mask | text_mask
@@ -203,7 +249,6 @@ def detect_descriptors_from_dataframe(df_raw: pd.DataFrame,
         return hits
 
     # 3) escaneo profundo en texto (vectorizado por regex)
-    # Construimos un patrón regex con OR de descriptores y nombres cortos (normalizados)
     all_keys = list(set(keys_desc + keys_nc))
     all_keys.sort(key=len, reverse=True)  # más largos primero
     pattern = "|".join([re.escape(k) for k in all_keys if k])
@@ -356,24 +401,25 @@ def build_excel_bytes(copilado_df: pd.DataFrame, pareto_df: pd.DataFrame) -> byt
 # -------------------------
 # UI principal
 # -------------------------
-if plantilla_file and desc_file:
-    with st.spinner("Leyendo archivos..."):
+if plantilla_file:
+    with st.spinner("Leyendo archivo…"):
         try:
             df_matriz = read_plantilla_matriz(plantilla_file)
-            df_desc   = read_desc(desc_file)
         except Exception as e:
-            st.error(f"Error al leer archivos: {e}")
+            st.error(f"Error al leer la Plantilla: {e}")
             st.stop()
 
     st.subheader("1) Previsualización")
-    st.caption("Primeras filas de la hoja `matriz` de la Plantilla (preview limitada)")
+    st.caption("Primeras filas de la hoja `matriz` (preview limitada)")
     st.dataframe(preview_df(df_matriz), use_container_width=True)
 
-    st.caption("Catálogo de descriptores (columnas clave)")
-    st.dataframe(df_desc[["NOMBRE CORTO", "CATEGORÍA", "DESCRIPTOR"]].head(15), use_container_width=True)
+    # Construir catálogo (embebido + pegado)
+    cat_df = build_catalogo_df()
+    st.caption("Catálogo activo (primeras filas)")
+    st.dataframe(cat_df.head(20), use_container_width=True)
 
     # Construir mapas de palabras clave
-    by_desc_norm, by_nc_norm, cat_by_desc = build_keyword_maps(df_desc)
+    by_desc_norm, by_nc_norm, cat_by_desc = build_keyword_maps(cat_df)
 
     st.subheader("2) Generar 'Copilado Comunidad'")
     deep_scan = st.toggle(
@@ -387,7 +433,7 @@ if plantilla_file and desc_file:
         copilado_df = make_copilado(hits)
 
     if copilado_df.empty:
-        st.warning("No se detectaron descriptores. Revisa que los encabezados/celdas contengan valores coincidentes con el catálogo.")
+        st.warning("No se detectaron descriptores con el catálogo actual. Puedes ampliar el catálogo pegando filas en el expander superior.")
         st.stop()
 
     st.success("Copilado generado.")
@@ -413,6 +459,7 @@ if plantilla_file and desc_file:
     )
 
 else:
-    st.info("Sube la **Plantilla de Comunidad** y el **catálogo Descriptores (ACTUALIZADOS)** para comenzar.")
+    st.info("Sube la **Plantilla de Comunidad** (XLSX, hoja `matriz`) para comenzar. Puedes ampliar el catálogo en el expander si lo necesitas.")
+
 
 
