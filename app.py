@@ -1,9 +1,9 @@
-# app.py — Pareto con columnas reordenadas y segmento fijo "80%"
-# ----------------------------------------------------------------
+# app.py — Pareto con gráfico 80/20 real y tabla/Excel con segmento fijo "80%"
+# ---------------------------------------------------------------------------
 # Requisitos:
 #   pip install streamlit pandas matplotlib xlsxwriter
 #   streamlit run app.py
-# ----------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 import io
 from typing import List, Dict
@@ -15,9 +15,9 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 
-# =========================
-# 1) Catálogo embebido (normalizado)
-# =========================
+# ============================================================================
+# 1) CATÁLOGO EMBEBIDO (normalizado; puedes editar/añadir aquí si hiciera falta)
+# ============================================================================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
     {"categoria": "Delito", "descriptor": "Abigeato (robo y destace de ganado)"},
@@ -188,25 +188,31 @@ CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Robo de equipo agrícola"},
 ]
 
-# =========================
-# 2) Utilidades
-# =========================
+# ============================================================================
+# 2) UTILIDADES
+# ============================================================================
 ORANGE = "#FF8C00"  # naranja vivo
+SKY    = "#87CEEB"  # celeste
 
 def calcular_pareto(df_in: pd.DataFrame) -> pd.DataFrame:
-    """Calcula Pareto y deja 'segmento' fijo en '80%' para todas las filas."""
+    """Calcula Pareto (segmento_real para gráfico; 'segmento' fijo '80%' para tabla/Excel)."""
     df = df_in.copy()
     df["frecuencia"] = pd.to_numeric(df["frecuencia"], errors="coerce").fillna(0).astype(int)
     df = df[df["frecuencia"] > 0]
     if df.empty:
-        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0, segmento="80%")
+        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0,
+                         segmento_real="20%", segmento="80%")
 
     df = df.sort_values("frecuencia", ascending=False)
     total = int(df["frecuencia"].sum())
     df["porcentaje"] = (df["frecuencia"] / total * 100).round(2)
     df["acumulado"]  = df["frecuencia"].cumsum()
     df["pct_acum"]   = (df["acumulado"] / total * 100).round(2)
-    df["segmento"]   = "80%"  # fijo según lo solicitado
+
+    # Segmento real (para pintar gráfico)
+    df["segmento_real"] = np.where(df["pct_acum"] <= 80.00, "80%", "20%")
+    # Segmento fijo (para tabla/Excel)
+    df["segmento"] = "80%"
     return df.reset_index(drop=True)
 
 def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
@@ -217,9 +223,10 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     x        = np.arange(len(df_par))
     freqs    = df_par["frecuencia"].to_numpy()
     pct_acum = df_par["pct_acum"].to_numpy()
+    colors   = [ORANGE if seg == "80%" else SKY for seg in df_par["segmento_real"]]
 
     fig, ax1 = plt.subplots(figsize=(14, 5))
-    ax1.bar(x, freqs, color=ORANGE)  # todo naranja (segmento 80%)
+    ax1.bar(x, freqs, color=colors)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
     ax1.set_xticklabels(df_par["descriptor"].tolist(), rotation=75, ha="right")
@@ -229,57 +236,59 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax2.plot(x, pct_acum, marker="o")
     ax2.set_ylabel("% acumulado")
     ax2.set_ylim(0, 110)
-    ax2.axhline(80, linestyle="--")  # referencia 80%
+
+    # Líneas 80/20 reales
+    if (df_par["segmento_real"] == "80%").any():
+        cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
+        ax1.axvline(cut_idx, linestyle=":", color="k")
+    ax2.axhline(80, linestyle="--")
 
     st.pyplot(fig)
 
 def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
-    """XLSX con columnas reordenadas y gráfico con barras naranjas."""
+    """XLSX con columnas ordenadas y gráfico con colores por 'segmento_real'."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         hoja = "Pareto"
 
-        # Reordenar y formatear antes de exportar
         df_x = df_par.copy()
-        # Para Excel: % como fracción 0-1 para aplicar formato 0.00%
+        # % como fracción para formato 0.00%
         df_x["porcentaje"] = (df_x["porcentaje"] / 100.0).round(4)
         df_x["pct_acum"]   = (df_x["pct_acum"] / 100.0).round(4)
 
-        # Reordenar columnas: categoría, descriptor, frecuencia, porcentaje, porcentaje acumulado, acumulado, segmento
-        df_x = df_x[["categoria", "descriptor", "frecuencia", "porcentaje", "pct_acum", "acumulado", "segmento"]]
+        # Orden pedido:
+        df_x = df_x[["categoria", "descriptor", "frecuencia",
+                     "porcentaje", "pct_acum", "acumulado", "segmento"]]
 
         df_x.to_excel(writer, sheet_name=hoja, index=False, startrow=0, startcol=0)
         wb = writer.book
         ws = writer.sheets[hoja]
 
-        # Formatos de columnas
+        # Formatos
         pct_fmt = wb.add_format({"num_format": "0.00%"})
-        ws.set_column("A:A", 18)   # categoria
+        ws.set_column("A:A", 18)   # categoría
         ws.set_column("B:B", 55)   # descriptor
         ws.set_column("C:C", 12)   # frecuencia
         ws.set_column("D:D", 12, pct_fmt)  # porcentaje
-        ws.set_column("E:E", 16, pct_fmt)  # porcentaje acumulado
+        ws.set_column("E:E", 18, pct_fmt)  # porcentaje acumulado
         ws.set_column("F:F", 12)   # acumulado
         ws.set_column("G:G", 10)   # segmento
 
         n = len(df_x)
-        # Rangos para el gráfico con el nuevo orden:
-        cats = f"=Pareto!$B$2:$B${n+1}"   # descriptor (columna B)
-        vals = f"=Pareto!$C$2:$C${n+1}"   # frecuencia (columna C)
-        pcts = f"=Pareto!$E$2:$E${n+1}"   # porcentaje acumulado (columna E)
+        # Rangos (con el nuevo orden): B=descriptor, C=frecuencia, E=pct_acum
+        cats = f"=Pareto!$B$2:$B${n+1}"
+        vals = f"=Pareto!$C$2:$C${n+1}"
+        pcts = f"=Pareto!$E$2:$E${n+1}"
 
-        # Total
-        total = int(df_par["frecuencia"].sum())
-        ws.write(n+2, 1, "TOTAL:")
-        ws.write(n+2, 2, total)
-
-        # Gráfico
+        # Gráfico: barras coloreadas por 'segmento_real'
         chart = wb.add_chart({"type": "column"})
+        points = [{"fill": {"color": (ORANGE if s == "80%" else SKY)}}
+                  for s in df_par["segmento_real"]]
         chart.add_series({
             "name": "Frecuencia",
             "categories": cats,
             "values": vals,
-            "fill": {"color": ORANGE},
+            "points": points,
         })
 
         line = wb.add_chart({"type": "line"})
@@ -293,7 +302,8 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
 
         chart.combine(line)
         chart.set_y_axis({"name": "Frecuencia"})
-        chart.set_y2_axis({"name": "% acumulado", "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
+        chart.set_y2_axis({"name": "Porcentaje acumulado",
+                           "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
         chart.set_title({"name": titulo if titulo.strip() else "PARETO – Frecuencia y % acumulado"})
         chart.set_legend({"position": "bottom"})
         chart.set_size({"width": 1180, "height": 420})
@@ -301,17 +311,18 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
 
     return output.getvalue()
 
-# =========================
-# 3) Estado (persistencia) y UI
-# =========================
+# ============================================================================
+# 3) UI + PERSISTENCIA
+# ============================================================================
 if "freq_map" not in st.session_state:
     st.session_state.freq_map = {}  # {descriptor: frecuencia}
 
 st.title("Pareto de Descriptores")
-st.caption("Columnas ordenadas y segmento fijado a '80%' según lo solicitado.")
+st.caption("Gráfico con 80/20 real. En tabla/Excel la columna 'segmento' muestra 80% para todas las filas (presentación).")
 
 titulo = st.text_input("Título del Pareto (opcional)", value="Pareto Comunidad")
 
+# Selector múltiple
 cat_df = pd.DataFrame(CATALOGO).sort_values(["categoria", "descriptor"]).reset_index(drop=True)
 opciones = cat_df["descriptor"].tolist()
 seleccion = st.multiselect("1) Escoge uno o varios descriptores", options=opciones, default=[])
@@ -337,17 +348,19 @@ if seleccion:
     for _, row in edit.iterrows():
         st.session_state.freq_map[row["descriptor"]] = int(row["frecuencia"])
 
+    # Data de entrada para el cálculo
     df_in = edit[["descriptor", "categoria"]].copy()
     df_in["frecuencia"] = df_in["descriptor"].map(st.session_state.freq_map).fillna(0).astype(int)
 
+    # ---- Cálculo y visualización ----
     st.subheader("3) Pareto")
     tabla = calcular_pareto(df_in)
 
-    # ---- Reordenar/renombrar para mostrar en la app ----
+    # Tabla en el orden solicitado y con nombres visibles
     mostrar = tabla.copy()
-    mostrar = mostrar[["categoria", "descriptor", "frecuencia", "porcentaje", "pct_acum", "acumulado", "segmento"]]
+    mostrar = mostrar[["categoria", "descriptor", "frecuencia",
+                       "porcentaje", "pct_acum", "acumulado", "segmento"]]
     mostrar = mostrar.rename(columns={"pct_acum": "porcentaje acumulado"})
-    # % con 2 decimales
     mostrar["porcentaje"] = mostrar["porcentaje"].map(lambda x: f"{x:.2f}%")
     mostrar["porcentaje acumulado"] = mostrar["porcentaje acumulado"].map(lambda x: f"{x:.2f}%")
 
@@ -365,7 +378,6 @@ if seleccion:
 
     st.subheader("4) Exportar")
     if not tabla.empty:
-        # CSV mantiene nombres internos; si quieres los mismos nombres visibles, exporta 'mostrar'
         st.download_button(
             "⬇️ Descargar CSV",
             data=mostrar.to_csv(index=False).encode("utf-8"),
@@ -380,6 +392,7 @@ if seleccion:
         )
 else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
+
 
 
 
