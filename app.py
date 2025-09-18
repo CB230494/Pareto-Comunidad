@@ -1,20 +1,145 @@
-# Pareto Comunidad – MSP
-# - 1 archivo obligatorio: Plantilla (hoja 'matriz')
-# - 1 archivo opcional: 'DESCRIPTORES ACTUALIZADOS 2024 v2.xlsx' (diccionario Descriptor -> Categoría)
+# app.py — Pareto Comunidad (DELITO / RIESGO SOCIAL / OTROS FACTORES)
+# Muestra porcentajes en pantalla como "4,66%" y exporta Excel con gráfico Pareto.
 
 import re
 import unicodedata
 from io import BytesIO
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import streamlit as st
+from difflib import get_close_matches
 
 st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide", initial_sidebar_state="collapsed")
 TOP_N_GRAFICO = 60
 
+# ===================== CATEGORÍAS PERMITIDAS =====================
+CATEGORIAS_VALIDAS = {"DELITO", "RIESGO SOCIAL", "OTROS FACTORES"}
+
+def _force_cat(x: str) -> str:
+    n = (x or "").strip().upper()
+    if n in CATEGORIAS_VALIDAS:
+        return n
+    return "OTROS FACTORES"
+
+# ===================== Diccionario embebido (EDITABLE/AMPLIABLE) ======================
+# Formato: ["Descriptor correcto", "Categoría"]
+DICCIONARIO_EMBEBIDO = pd.DataFrame([
+    # -------- DELITO --------
+    ["Consumo de drogas", "DELITO"],
+    ["Venta de drogas", "DELITO"],
+    ["Bunker (Puntos de venta y consumo de drogas)", "DELITO"],
+    ["Hurto", "DELITO"],
+    ["Robo a personas", "DELITO"],
+    ["Robo a vivienda (Tacha)", "DELITO"],
+    ["Robo a vivienda (Intimidación)", "DELITO"],
+    ["Robo a vehículos (Tacha)", "DELITO"],
+    ["Robo a vehiculos", "DELITO"],
+    ["Robo a comercio (Intimidación)", "DELITO"],
+    ["Robo a comercio (Tacha)", "DELITO"],
+    ["Robo de vehículos", "DELITO"],
+    ["Receptación", "DELITO"],
+    ["Estafas o defraudación", "DELITO"],
+    ["Daños/Vandalismo", "DELITO"],
+    ["Lesiones", "DELITO"],
+    ["Portación ilegal de arma", "DELITO"],
+    ["Tentativa de homicidio", "DELITO"],
+    ["Homicidio", "DELITO"],
+    ["Abigeato", "DELITO"],
+    ["Acoso sexual callejero", "DELITO"],
+    ["Allanamiento de morada", "DELITO"],
+    ["Amenazas", "DELITO"],
+    ["Apropiación indebida", "DELITO"],
+    ["Asociación ilícita", "DELITO"],
+    ["Asesinato", "DELITO"],
+    ["Contrabando", "DELITO"],
+    ["Corrupción de funcionario", "DELITO"],
+    ["Daños culposos", "DELITO"],
+    ["Delitos informáticos", "DELITO"],
+    ["Encubrimiento", "DELITO"],
+    ["Estafa electrónica", "DELITO"],
+    ["Extorsión", "DELITO"],
+    ["Falsificación de documentos", "DELITO"],
+    ["Femicidio", "DELITO"],
+    ["Fraude", "DELITO"],
+    ["Quebrantamiento de medidas", "DELITO"],
+    ["Rapiña", "DELITO"],
+    ["Resistencia a la autoridad", "DELITO"],
+    ["Robo agravado", "DELITO"],
+    ["Sustracción de menores", "DELITO"],
+    ["Tráfico de armas", "DELITO"],
+    ["Violencia intrafamiliar", "DELITO"],
+    ["Violencia de género", "DELITO"],
+
+    # ---- RIESGO SOCIAL ----
+    ["Falta de oportunidades laborales.", "RIESGO SOCIAL"],
+    ["Falta de inversion social", "RIESGO SOCIAL"],
+    ["Personas con exceso de tiempo de ocio", "RIESGO SOCIAL"],
+    ["Problemas Vecinales.", "RIESGO SOCIAL"],
+    ["Ausentismo escolar", "RIESGO SOCIAL"],
+    ["Niñez y adolescencia en riesgo", "RIESGO SOCIAL"],
+    ["Población migrante vulnerable", "RIESGO SOCIAL"],
+    ["Población indígena en riesgo", "RIESGO SOCIAL"],
+    ["Adultos mayores en abandono", "RIESGO SOCIAL"],
+    ["Familias disfuncionales", "RIESGO SOCIAL"],
+    ["Consumo problemático en jóvenes", "RIESGO SOCIAL"],
+    ["Violencia escolar", "RIESGO SOCIAL"],
+
+    # ---- OTROS FACTORES ----
+    ["Consumo de alcohol en vía pública", "OTROS FACTORES"],
+    ["Contaminacion Sonica", "OTROS FACTORES"],
+    ["Deficiencia en la infraestructura vial", "OTROS FACTORES"],
+    ["Lotes baldíos.", "OTROS FACTORES"],
+    ["Falta de salubridad publica", "OTROS FACTORES"],
+    ["Disturbios(Riñas)", "OTROS FACTORES"],
+    ["Personas en situación de calle.", "OTROS FACTORES"],
+    ["Mercado municipal desordenado", "OTROS FACTORES"],
+    ["Paradas informales de autobús", "OTROS FACTORES"],
+    ["Iluminación pública deficiente", "OTROS FACTORES"],
+    ["Basura en vía pública", "OTROS FACTORES"],
+    ["Parques sin mantenimiento", "OTROS FACTORES"],
+    ["Grafitis y vandalismo menor", "OTROS FACTORES"],
+    ["Parqueos improvisados", "OTROS FACTORES"],
+    ["Venta ambulante desordenada", "OTROS FACTORES"],
+    ["Feria del agricultor sin control", "OTROS FACTORES"],
+], columns=["Descriptor", "Categoría"]).assign(Categoría=lambda d: d["Categoría"].map(_force_cat))
+
+# ===================== Sinónimos / variaciones (opcional, amplialo si quieres) =========================
+SINONIMOS: Dict[str, List[str]] = {
+    # DELITO
+    "Consumo de drogas": ["consumo de drogas", "consumen drogas", "consumo marihuana", "fumando piedra"],
+    "Venta de drogas": ["venta de drogas", "punto de venta", "narcomenudeo"],
+    "Hurto": ["hurto", "sustraccion"],
+    "Robo a personas": ["robo a personas", "asalto a persona", "atraco a persona"],
+    "Robo a vivienda (Tacha)": ["tacha vivienda", "robo vivienda tacha"],
+    "Robo a vivienda (Intimidación)": ["asalto a vivienda", "intimidacion vivienda"],
+    "Robo a vehículos (Tacha)": ["tacha vehiculos", "robo tacha vehiculo"],
+    "Robo a vehiculos": ["robo de vehiculos", "robo carro", "robo moto"],
+    "Robo a comercio (Intimidación)": ["asalto a comercio"],
+    "Robo a comercio (Tacha)": ["robo comercio tacha"],
+    "Daños/Vandalismo": ["daños", "vandalismo", "grafiti", "daño a la propiedad"],
+    "Receptación": ["receptacion", "compra de robado", "reduccion"],
+    "Estafas o defraudación": ["estafas", "defraudacion", "estafa"],
+    "Robo de vehículos": ["robo de vehiculos"],
+    "Lesiones": ["lesiones", "golpiza"],
+    # RIESGO SOCIAL
+    "Falta de oportunidades laborales.": ["desempleo", "falta de empleo"],
+    "Falta de inversion social": ["falta de inversión social"],
+    "Personas con exceso de tiempo de ocio": ["ocio juvenil", "exceso de ocio"],
+    "Problemas Vecinales.": ["conflictos vecinales", "problemas vecinales"],
+    # OTROS FACTORES
+    "Consumo de alcohol en vía pública": ["consumo de alcohol en via publica", "licores en via publica"],
+    "Contaminacion Sonica": ["contaminacion sonora", "ruido", "musica alta", "bulla"],
+    "Deficiencia en la infraestructura vial": ["infraestructura vial", "huecos", "baches"],
+    "Lotes baldíos.": ["lote baldio", "lotes baldios"],
+    "Falta de salubridad publica": ["insalubridad"],
+    "Disturbios(Riñas)": ["disturbios", "riñas", "riña", "peleas"],
+    "Personas en situación de calle.": ["situacion de calle", "indigentes", "habitantes de calle"],
+}
+
 # ===================== Utilidades =====================
+import re as _re
 def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFKD", s)
     return "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -22,9 +147,8 @@ def strip_accents(s: str) -> str:
 def norm_text(s: Optional[str]) -> str:
     if s is None:
         return ""
-    s = str(s)
-    s = strip_accents(s).lower().strip()
-    s = re.sub(r"\s+", " ", s)
+    s = strip_accents(str(s)).lower().strip()
+    s = _re.sub(r"\s+", " ", s)
     return s
 
 def make_unique_columns(cols: List[str]) -> List[str]:
@@ -44,106 +168,25 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 def read_matriz(file_bytes: bytes) -> pd.DataFrame:
     return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
 
-@st.cache_data(show_spinner=False)
-def read_diccionario(file_bytes: bytes) -> pd.DataFrame:
-    # intenta encontrar una hoja que tenga columnas 'Descriptor' y 'Categoria'
-    xls = pd.ExcelFile(BytesIO(file_bytes))
-    for sh in xls.sheet_names:
-        df = pd.read_excel(xls, sheet_name=sh)
-        cols = {norm_text(c): c for c in df.columns}
-        if "descriptor" in cols and ("categoria" in cols or "categoría" in cols):
-            cat_col = cols.get("categoria", cols.get("categoría"))
-            out = df[[cols["descriptor"], cat_col]].copy()
-            out.columns = ["Descriptor", "Categoría"]
-            out["Descriptor"] = out["Descriptor"].astype(str).str.strip()
-            out["Categoría"] = out["Categoría"].astype(str).str.strip()
-            out = out.dropna(subset=["Descriptor"]).drop_duplicates(subset=["Descriptor"], keep="first")
-            return out
-    raise ValueError("No se encontró hoja con columnas 'Descriptor' y 'Categoría'.")
+def build_regex_all(dic_df: pd.DataFrame) -> Dict[str, re.Pattern]:
+    compiled = {}
+    base_keys = list(dic_df["Descriptor"].astype(str)) + list(SINONIMOS.keys())
+    base_keys = sorted(set(base_keys))
+    for d in base_keys:
+        keys = SINONIMOS.get(d, []) + [d]
+        toks = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
+        if toks:
+            compiled[d] = re.compile(r"(?:(?<=\s)|^)(" + "|".join(toks) + r")(?:(?=\s)|$)")
+    return compiled
 
-# ===================== Catálogo/Sinónimos (fallback) =====================
-CATEGORIA_POR_DESCRIPTOR_DEFAULT: Dict[str, str] = {
-    # ← lista base (se usa si NO subes diccionario). Se puede ampliar.
-    "Consumo de drogas": "DROGAS",
-    "Venta de drogas": "DROGAS",
-    "Hurto": "DELITOS CONTRA LA PROPIEDAD",
-    "Robo a personas": "DELITOS CONTRA LA PROPIEDAD",
-    "Falta de inversion social": "RIESGO SOCIAL",
-    "Consumo de alcohol en vía pública": "ALCOHOL",
-    "Deficiencia en la infraestructura vial": "ORDEN PÚBLICO",
-    "Robo a vivienda (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
-    "Contaminacion Sonica": "ORDEN PÚBLICO",
-    "Bunker (Puntos de venta y consumo de drogas)": "DROGAS",
-    "Robo a vivienda (Intimidación)": "DELITOS CONTRA LA PROPIEDAD",
-    "Disturbios(Riñas)": "ORDEN PÚBLICO",
-    "Robo a vehículos (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
-    "Robo a vehiculos": "DELITOS CONTRA LA PROPIEDAD",
-    "Robo a comercio (Intimidación)": "DELITOS CONTRA LA PROPIEDAD",
-    "Daños/Vandalismo": "DELITOS CONTRA LA PROPIEDAD",
-    "Robo de vehículos": "DELITOS CONTRA LA PROPIEDAD",
-    "Personas en situación de calle.": "ORDEN PÚBLICO",
-    "Personas con exceso de tiempo de ocio": "RIESGO SOCIAL",
-    "Lesiones": "DELITOS CONTRA LA VIDA",
-    "Estafas o defraudación": "DELITOS CONTRA LA PROPIEDAD",
-    "Lotes baldíos.": "ORDEN PÚBLICO",
-    "Falta de salubridad publica": "ORDEN PÚBLICO",
-    "Falta de oportunidades laborales.": "RIESGO SOCIAL",
-    "Contrabando": "DELITOS CONTRA LA PROPIEDAD",
-    "Problemas Vecinales.": "RIESGO SOCIAL",
-    "Robo a comercio (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
-    "Receptación": "DELITOS CONTRA LA PROPIEDAD",
-}
-
-SINONIMOS: Dict[str, List[str]] = {
-    "Consumo de drogas": ["consumo de drogas", "consumen drogas", "consumo marihuana", "fumando piedra"],
-    "Venta de drogas": ["venta de drogas", "punto de venta", "narcomenudeo"],
-    "Hurto": ["hurto", "sustraccion"],
-    "Robo a personas": ["robo a personas", "asalto a persona", "atraco a persona"],
-    "Falta de inversion social": ["falta de inversion social"],
-    "Consumo de alcohol en vía pública": ["consumo de alcohol en via publica", "licores en via publica"],
-    "Deficiencia en la infraestructura vial": ["deficiencia en la infraestructura vial", "huecos", "baches"],
-    "Robo a vivienda (Tacha)": ["robo a vivienda tacha"],
-    "Contaminacion Sonica": ["contaminacion sonora", "ruido", "musica alta", "bulla"],
-    "Bunker (Puntos de venta y consumo de drogas)": ["bunker", "bunquer", "búnker"],
-    "Robo a vivienda (Intimidación)": ["robo a vivienda intimidacion", "asalto a vivienda"],
-    "Disturbios(Riñas)": ["disturbios", "riñas", "riña", "peleas"],
-    "Robo a vehículos (Tacha)": ["robo a vehiculos tacha"],
-    "Robo a vehiculos": ["robo de vehiculos", "robo carro", "robo moto"],
-    "Robo a comercio (Intimidación)": ["robo a comercio intimidacion", "asalto a comercio"],
-    "Daños/Vandalismo": ["danos", "vandalismo", "grafiti", "daño a la propiedad"],
-    "Robo de vehículos": ["robo de vehiculos"],
-    "Personas en situación de calle.": ["personas en situacion de calle", "indigencia", "habitantes de calle"],
-    "Personas con exceso de tiempo de ocio": ["exceso de tiempo de ocio", "ocio juvenil"],
-    "Lesiones": ["lesiones", "lesionados", "golpiza"],
-    "Estafas o defraudación": ["estafas", "defraudacion", "estafa"],
-    "Lotes baldíos.": ["lotes baldios", "lote baldio"],
-    "Falta de salubridad publica": ["falta de salubridad publica", "insalubridad"],
-    "Falta de oportunidades laborales.": ["falta de oportunidades laborales", "desempleo"],
-    "Contrabando": ["contrabando"],
-    "Problemas Vecinales.": ["problemas vecinales", "conflictos vecinales"],
-    "Robo a comercio (Tacha)": ["robo a comercio tacha"],
-    "Receptación": ["receptacion", "compra de robado", "reduccion"],
-}
-
-# ===================== Detección =====================
 def header_marked_series(s: pd.Series) -> pd.Series:
     num = pd.to_numeric(s, errors="coerce").fillna(0) != 0
     txt = s.astype(str).apply(norm_text)
     mask = ~txt.isin(["", "no", "0", "nan", "none", "false"])
     return num | mask
 
-def build_regex_by_desc() -> Dict[str, re.Pattern]:
-    compiled = {}
-    for desc, keys in SINONIMOS.items():
-        toks = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
-        if not toks:
-            toks = [re.escape(norm_text(desc))]
-        pat = r"(?:(?<=\s)|^)(" + "|".join(toks) + r")(?:(?=\s)|$)"
-        compiled[desc] = re.compile(pat)
-    return compiled
-
 def detect_by_headers(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
-    counts = {d: 0 for d in CATEGORIA_POR_DESCRIPTOR_DEFAULT.keys()}
+    counts: Dict[str, int] = {}
     for desc, pat in regex_by_desc.items():
         hit_cols = [c for c in df_norm.columns if re.search(pat, " " + c + " ") is not None]
         if not hit_cols:
@@ -153,7 +196,7 @@ def detect_by_headers(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern
             m = header_marked_series(df_norm[c])
             mask_any = m if mask_any is None else (mask_any | m)
         if mask_any is not None:
-            counts[desc] += int(mask_any.sum())
+            counts[desc] = counts.get(desc, 0) + int(mask_any.sum())
     return counts
 
 def guess_text_cols(df_norm: pd.DataFrame) -> List[str]:
@@ -168,7 +211,7 @@ def guess_text_cols(df_norm: pd.DataFrame) -> List[str]:
     return out
 
 def detect_in_text(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
-    counts = {d: 0 for d in CATEGORIA_POR_DESCRIPTOR_DEFAULT.keys()}
+    counts: Dict[str, int] = {}
     tcols = guess_text_cols(df_norm)
     if not tcols:
         return counts
@@ -178,12 +221,11 @@ def detect_in_text(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) 
             m = df_norm[c].astype(str).apply(norm_text).str.contains(pat, na=False)
             mask_any = m if mask_any is None else (mask_any | m)
         if mask_any is not None:
-            counts[desc] += int(mask_any.sum())
+            counts[desc] = counts.get(desc, 0) + int(mask_any.sum())
     return counts
 
-def build_copilado(counts_headers: Dict[str, int], counts_text: Dict[str, int]) -> pd.DataFrame:
-    total = {}
-    # unión de claves conocidas
+def build_copilado_from_counts(counts_headers: Dict[str, int], counts_text: Dict[str, int]) -> pd.DataFrame:
+    total: Dict[str, int] = {}
     keys = set(counts_headers) | set(counts_text)
     for d in keys:
         total[d] = counts_headers.get(d, 0) + counts_text.get(d, 0)
@@ -193,24 +235,56 @@ def build_copilado(counts_headers: Dict[str, int], counts_text: Dict[str, int]) 
     df = pd.DataFrame(rows, columns=["Descriptor", "Frecuencia"])
     return df.sort_values(["Frecuencia", "Descriptor"], ascending=[False, True], ignore_index=True)
 
-def build_pareto(copilado: pd.DataFrame, cat_map: Dict[str, str]) -> pd.DataFrame:
+# --- Canonización (fuzzy) a descriptor del catálogo ---
+def build_canon_maps(dic_df: pd.DataFrame) -> Tuple[Dict[str,str], Dict[str,str]]:
+    desc_by_norm = {}
+    cat_by_norm  = {}
+    for _, r in dic_df.iterrows():
+        d = str(r["Descriptor"]).strip()
+        c = _force_cat(str(r["Categoría"]))
+        desc_by_norm[norm_text(d)] = d
+        cat_by_norm[norm_text(d)]  = c
+    return desc_by_norm, cat_by_norm
+
+def canoniza(raw_desc: str, desc_by_norm: Dict[str,str]) -> str:
+    n = norm_text(raw_desc)
+    if n in desc_by_norm:
+        return desc_by_norm[n]
+    candidates = list(desc_by_norm.keys())
+    hit = get_close_matches(n, candidates, n=1, cutoff=0.82)
+    if hit:
+        return desc_by_norm[hit[0]]
+    return raw_desc.strip()
+
+def build_pareto(copilado: pd.DataFrame, dic_df: pd.DataFrame) -> pd.DataFrame:
     if copilado.empty:
         return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"])
-    df = copilado.copy()
-    # map de categoría
-    df["Categoría"] = df["Descriptor"].map(cat_map).fillna("")
-    # TOTAL sobre el que se sacan % (=> último acumulado)
-    total = int(df["Frecuencia"].sum())
-    df["Porcentaje"]  = (df["Frecuencia"] / total) * 100.0
-    df = df.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
-    df["% acumulado"] = df["Porcentaje"].cumsum()
-    df["Acumulado"]   = df["Frecuencia"].cumsum()
-    df["80/20"]       = "80%"
-    # Garantía: último acumulado = TOTAL
-    assert int(df["Acumulado"].iloc[-1]) == total
-    return df[["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"]]
 
-# ===================== Excel (formato idéntico) =====================
+    desc_by_norm, cat_by_norm = build_canon_maps(dic_df)
+
+    df = copilado.copy()
+    df["Descriptor"] = df["Descriptor"].astype(str)
+    df["Descriptor Canon"] = df["Descriptor"].apply(lambda x: canoniza(x, desc_by_norm))
+    df["Categoría"] = df["Descriptor Canon"].apply(lambda d: _force_cat(cat_by_norm.get(norm_text(d), "OTROS FACTORES")))
+
+    grp = df.groupby(["Categoría", "Descriptor Canon"], as_index=False)["Frecuencia"].sum()
+    grp = grp.rename(columns={"Descriptor Canon":"Descriptor"})
+
+    # TOTAL y % (fracciones 0–1)
+    total = int(grp["Frecuencia"].sum())
+    grp = grp.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
+    grp["Porcentaje"]  = (grp["Frecuencia"] / total)     # fracción 0–1
+    grp["% acumulado"] = grp["Porcentaje"].cumsum()      # fracción 0–1
+    grp["Acumulado"]   = grp["Frecuencia"].cumsum()
+    grp["80/20"]       = "80%"
+
+    # Garantías
+    assert int(grp["Acumulado"].iloc[-1]) == total
+    assert abs(float(grp["% acumulado"].iloc[-1]) - 1.0) < 1e-9
+
+    return grp[["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"]]
+
+# ===================== Excel con formato + gráfico =====================
 def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> bytes:
     from pandas import ExcelWriter
     import xlsxwriter  # noqa: F401
@@ -225,7 +299,6 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         if not n:
             return out.getvalue()
 
-        # formatos (coma decimal, miles)
         fmt_head = wb.add_format({"bold": True, "align": "center", "bg_color": "#D9E1F2", "border": 1})
         fmt_pct  = wb.add_format({"num_format": "0,00%", "align": "right", "border": 1})
         fmt_int  = wb.add_format({"num_format": "#,##0", "align": "center", "border": 1})
@@ -233,34 +306,32 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         fmt_cent = wb.add_format({"align": "center"})
         fmt_yel  = wb.add_format({"bg_color": "#FFF2CC"})
 
-        # columnas/encabezado
         ws.set_row(0, None, fmt_head)
         ws.set_column("A:A", 22, fmt_txt)
         ws.set_column("B:B", 52, fmt_txt)
         ws.set_column("C:C", 12, fmt_int)
-        ws.set_column("D:D", 12, fmt_pct)   # Porcentaje
-        ws.set_column("E:E", 12, fmt_pct)   # % acumulado
-        ws.set_column("F:F", 12, fmt_int)   # Acumulado
-        ws.set_column("G:G", 8,  fmt_cent)  # 80/20
+        ws.set_column("D:D", 12, fmt_pct)   # fracción → 0,00%
+        ws.set_column("E:E", 12, fmt_pct)
+        ws.set_column("F:F", 12, fmt_int)
+        ws.set_column("G:G", 8,  fmt_cent)
 
-        # pintar ≤80% en amarillo
-        cutoff_idx = int((pareto["% acumulado"] <= 80).sum())
+        cutoff_idx = int((pareto["% acumulado"] <= 0.80).sum())
         if cutoff_idx > 0:
             ws.conditional_format(1, 0, cutoff_idx, 6, {"type": "no_blanks", "format": fmt_yel})
 
-        # columnas auxiliares (ocultas)
+        # columnas auxiliares
         ws.write(0, 9, "80/20");  ws.set_column("J:J", 6,  None, {"hidden": True})
         ws.write(0,10, "CorteX"); ws.set_column("K:K", 20, None, {"hidden": True})
         ws.write(0,11, "%");      ws.set_column("L:L", 6,  None, {"hidden": True})
         for i in range(n):
-            ws.write_number(i+1, 9, 0.80)  # 80%
+            ws.write_number(i+1, 9, 0.80)
 
         corte_row = max(1, cutoff_idx)
-        xcat = pareto.iloc[corte_row-1]["Descriptor"]
+        xcat = pareto.iloc[corte_row-1]["Descripcion"] if "Descripcion" in pareto.columns else pareto.iloc[corte_row-1]["Descriptor"]
         ws.write(1,10, xcat); ws.write(2,10, xcat)
         ws.write_number(1,11, 0.0); ws.write_number(2,11, 1.0)
 
-        # gráfico grande
+        # Barras: Frecuencia
         chart = wb.add_chart({'type': 'column'})
         points = [{"fill": {"color": "#5B9BD5"}} for _ in range(n)]
         for i in range(cutoff_idx, n):
@@ -272,6 +343,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
             'points': points,
         })
 
+        # Línea: % acumulado (eje secundario)
         line = wb.add_chart({'type': 'line'})
         line.add_series({
             'name': '% acumulado',
@@ -282,6 +354,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         })
         chart.combine(line)
 
+        # Línea horizontal 80%
         h80 = wb.add_chart({'type': 'line'})
         h80.add_series({
             'name': '80/20',
@@ -292,11 +365,12 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         })
         chart.combine(h80)
 
+        # Línea vertical en el corte
         vline = wb.add_chart({'type': 'line'})
         vline.add_series({
             'name': '',
-            'categories': [sheet, 1, 10, 2, 10],  # misma categoría → vertical
-            'values':     [sheet, 1, 11, 2, 11],  # 0→1
+            'categories': [sheet, 1, 10, 2, 10],
+            'values':     [sheet, 1, 11, 2, 11],
             'y2_axis': True,
             'line': {'color': '#C00000', 'width': 2.25},
             'marker': {'type': 'none'},
@@ -310,25 +384,18 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         chart.set_y_axis({'major_gridlines': {'visible': False}})
         chart.set_y2_axis({'min': 0, 'max': 1, 'major_unit': 0.1, 'num_format': '0%'})
         chart.set_legend({'position': 'bottom'})
-
         ws.insert_chart(1, 9, chart, {'x_scale': 1.9, 'y_scale': 1.6})
 
     return out.getvalue()
 
 # ===================== UI =====================
-st.title("Pareto Comunidad – MSP (total correcto y categorías del diccionario)")
+st.title("Pareto Comunidad – MSP (DELITO / RIESGO SOCIAL / OTROS FACTORES)")
 
-colA, colB = st.columns([1.3, 1])
-with colA:
-    plantilla = st.file_uploader("📄 Subí la Plantilla (XLSX) – hoja `matriz`", type=["xlsx"])
-with colB:
-    dicc = st.file_uploader("🔎 (Opcional) Subí el diccionario de descriptores (XLSX)", type=["xlsx"])
-
+plantilla = st.file_uploader("📄 Subí la Plantilla (XLSX) – hoja `matriz`", type=["xlsx"])
 if not plantilla:
     st.info("Subí la Plantilla para procesar.")
     st.stop()
 
-# leer datos
 try:
     df_raw = read_matriz(plantilla.getvalue())
 except Exception as e:
@@ -339,54 +406,62 @@ df = normalize_columns(df_raw)
 st.caption(f"Vista previa (primeras 20 de {len(df)} filas)")
 st.dataframe(df.head(20), use_container_width=True)
 
-# construir catálogo desde diccionario (si lo suben)
-cat_map = CATEGORIA_POR_DESCRIPTOR_DEFAULT.copy()
-if dicc is not None:
-    try:
-        dic_df = read_diccionario(dicc.getvalue())
-        # crear map exacto Descriptor->Categoría desde tu archivo
-        cat_map = {row["Descriptor"]: row["Categoría"] for _, row in dic_df.iterrows()}
-        st.success("Diccionario de descriptores cargado. Se usará Categoría del archivo.")
-    except Exception as e:
-        st.warning(f"No se pudo leer el diccionario: {e}. Se usa el catálogo por defecto.")
+# --- Si la hoja trae DESCRIPTOR + FRECUENCIA, usamos tal cual ---
+cols_norm = {c: norm_text(c) for c in df.columns}
+inv = {v: k for k, v in cols_norm.items()}
 
-# detección
-def build_regex_all():
-    comp = {}
-    base_keys = set(cat_map.keys()) | set(SINONIMOS.keys())
-    for d in base_keys:
-        keys = SINONIMOS.get(d, []) + [d]
-        toks = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
-        if not toks:
-            continue
-        comp[d] = re.compile(r"(?:(?<=\s)|^)(" + "|".join(toks) + r")(?:(?=\s)|$)")
-    return comp
+desc_candidates = [col for col, n in cols_norm.items()
+                   if any(t in n for t in ["descriptor", "problema", "descriptor actualizado", "descripcion"])]
 
-with st.spinner("Procesando (encabezados + texto)…"):
-    regex = build_regex_all()
-    # para conteo por encabezados uso claves del catálogo default (para no explotar)
+freq_col = next((inv[x] for x in ["frecuencia"] if x in inv), None)
+
+if freq_col and desc_candidates:
+    base = df[[desc_candidates[0], freq_col]].copy()
+    base.columns = ["Descriptor", "Frecuencia"]
+    base["Frecuencia"] = pd.to_numeric(base["Frecuencia"], errors="coerce").fillna(0).astype(int)
+    base = base.groupby("Descriptor", as_index=False)["Frecuencia"].sum()
+else:
+    regex = build_regex_all(DICCIONARIO_EMBEBIDO)
     counts_h = detect_by_headers(df, regex)
     counts_t = detect_in_text(df, regex)
-    copilado = build_copilado(counts_h, counts_t)
-    pareto   = build_pareto(copilado, cat_map)
+    base = build_copilado_from_counts(counts_h, counts_t)
 
-if copilado.empty:
-    st.warning("No se detectaron descriptores. Revisa sinónimos o comparte un ejemplo con texto.")
+if base.empty or base["Frecuencia"].sum() == 0:
+    st.warning("No se detectaron descriptores o las frecuencias son 0. Revisá la plantilla.")
     st.stop()
 
-# TOTAL visible (último acumulado)
+pareto = build_pareto(base, DICCIONARIO_EMBEBIDO)
+
+# ---------- FORMATO DE PORCENTAJES EN PANTALLA (4,66%) ----------
+def pct_str(frac: float) -> str:
+    # convierte 0.0466 -> "4,66%"
+    s = f"{frac*100:.2f}%"
+    return s.replace(".", ",")
+
+display = pareto.copy()
+display["Porcentaje"] = display["Porcentaje"].apply(pct_str)
+display["% acumulado"] = display["% acumulado"].apply(pct_str)
+
 TOTAL = int(pareto["Acumulado"].iloc[-1])
-
 st.subheader(f"Pareto Comunidad (TOTAL = {TOTAL:,})")
-st.dataframe(pareto, use_container_width=True)
+st.dataframe(display, use_container_width=True)
 
-# vista rápida
-plot_df = pareto.head(TOP_N_GRAFICO).copy()
-st.subheader("Gráfico (vista rápida)")
-st.bar_chart(plot_df.set_index("Descriptor")["Frecuencia"])
-st.line_chart(plot_df.set_index("Descriptor")["% acumulado"])
+# ======== Gráfico rápido (barras + % acumulado + 80%) ========
+import altair as alt
+top_df = pareto.head(TOP_N_GRAFICO).copy()
+bars = alt.Chart(top_df).mark_bar().encode(
+    x=alt.X('Descriptor:N', sort=None, axis=alt.Axis(labelAngle=-50)),
+    y=alt.Y('Frecuencia:Q')
+)
+line = alt.Chart(top_df).mark_line(point=True).encode(
+    x='Descriptor:N',
+    y=alt.Y('% acumulado:Q', axis=alt.Axis(format='%'), scale=alt.Scale(domain=[0,1])),
+    color=alt.value('#ED7D31')
+)
+h80 = alt.Chart(pd.DataFrame({'y':[0.8]})).mark_rule().encode(y=alt.Y('y:Q', axis=alt.Axis(format='%')))
+st.altair_chart((bars + line + h80).resolve_scale(y='independent'), use_container_width=True)
 
-# descarga excel definitivo
+# ========= Descargar Excel definitivo =========
 st.subheader("Descargar Excel final")
 st.download_button(
     "⬇️ Pareto Comunidad (Excel con formato y gráfico)",
@@ -394,5 +469,6 @@ st.download_button(
     file_name="Pareto_Comunidad.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
 
 
