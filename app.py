@@ -104,7 +104,13 @@ def headers_amarillos_en_rango(xlsx_file: BytesIO, sheet_name: Optional[str], de
 
 
 def contar_frecuencias(df: pd.DataFrame, columnas: List[str]) -> pd.DataFrame:
+    """Cuenta menciones (no vacío y ≠ 0) por columna/descriptor.
+    Devuelve SIEMPRE un DF con columnas ["DESCRIPTOR", "frecuencia"].
+    """
     cols = [c for c in columnas if c in df.columns]
+    if not cols:
+        return pd.DataFrame(columns=["DESCRIPTOR", "frecuencia"])  # vacío seguro
+
     freqs = []
     for c in cols:
         s = df[c]
@@ -113,7 +119,11 @@ def contar_frecuencias(df: pd.DataFrame, columnas: List[str]) -> pd.DataFrame:
         num = pd.to_numeric(s, errors="coerce")
         mask &= ~((~num.isna()) & (num == 0))
         freqs.append({"DESCRIPTOR": c, "frecuencia": int(mask.sum())})
-    out = pd.DataFrame(freqs)
+
+    out = pd.DataFrame(freqs, columns=["DESCRIPTOR", "frecuencia"])  # garantiza columnas
+    if out.empty:
+        return pd.DataFrame(columns=["DESCRIPTOR", "frecuencia"])  # vacío seguro
+
     out = out[out["frecuencia"] > 0].sort_values("frecuencia", ascending=False).reset_index(drop=True)
     return out
 
@@ -226,7 +236,12 @@ if not amarillos:
 # 3) Conteo y Pareto
 freqs = contar_frecuencias(df, amarillos)
 if freqs.empty:
-    st.warning("No se encontraron menciones en las columnas del rango AI–ET (con/sin amarillo).")
+    # Mensaje útil: mostrar por qué quedó vacío
+    faltantes = [h for h in amarillos if h not in df.columns]
+    if faltantes:
+        st.error("No se encontraron estas columnas en la hoja (revisa el rango AI–ET o el nombre exacto del encabezado):\n- " + "\n- ".join(faltantes))
+    else:
+        st.warning("No hay menciones (todas las celdas vacías o 0) en las columnas detectadas del rango AI–ET.")
     st.stop()
 
 df_pareto, total = construir_pareto(freqs)
@@ -253,5 +268,4 @@ with c1:
 with c2:
     xio = exportar_excel_con_grafico(df_pareto, fig, hoja="PARETO")
     st.download_button("⬇️ Excel (tabla + gráfico)", data=xio, file_name=f"pareto_{_strip(comunidad).replace(' ', '_').lower()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
 
