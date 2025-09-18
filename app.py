@@ -1,5 +1,6 @@
 # app.py — Pareto Comunidad (DELITO / RIESGO SOCIAL / OTROS FACTORES)
-# Lee SOLO columnas AI:ET (matriz), cuenta por columna y arma el Pareto.
+# Lee columnas AI:ET y cuenta celdas con datos (no vacías / no "no" / no "0").
+# Si detecta encabezados AI:ET con color amarillo, usa solo esas columnas; si no, usa todas AI:ET.
 
 import re
 import unicodedata
@@ -22,7 +23,6 @@ def _force_cat(x: str) -> str:
     return n if n in CATEGORIAS_VALIDAS else "OTROS FACTORES"
 
 # ===================== Diccionario embebido (AMPLIABLE) =====================
-# Si querés pegar tu catálogo completo, agregalo aquí. La categoría SIEMPRE debe ser una de las 3.
 DICCIONARIO_EMBEBIDO = pd.DataFrame([
     # -------- DELITO --------
     ["Venta de drogas", "DELITO"],
@@ -83,7 +83,7 @@ DICCIONARIO_EMBEBIDO = pd.DataFrame([
     ["Pesca ilegal", "OTROS FACTORES"],
 ], columns=["Descriptor", "Categoría"]).assign(Categoría=lambda d: d["Categoría"].map(_force_cat))
 
-# ===================== Sinónimos / variaciones (para mapear encabezados) =====================
+# ===================== Sinónimos / variaciones (mapeo encabezados) =====================
 SINONIMOS: Dict[str, List[str]] = {
     "Venta de drogas": ["venta de drogas", "puntos de venta", "narcomenudeo"],
     "Consumo de drogas": ["consumo de drogas", "consumen drogas", "consumo marihuana", "fumando piedra"],
@@ -147,16 +147,81 @@ def excel_col_to_index(col: str) -> int:
 AI_IDX = excel_col_to_index("AI") - 1  # 0-based
 ET_IDX = excel_col_to_index("ET") - 1
 
-# ===================== Canonización (fuzzy) =====================
+# --- detectar encabezados amarillos (opcional) ---
+def is_yellow(rgb: Optional[str]) -> bool:
+    if not rgb: return False
+    rgb = str(rgb).upper()
+    if len(rgb) == 8: rgb = rgb[2:] if rgb.startswith("FF") else rgb[-6:]
+    if len(rgb) != 6: return False
+    known = {"FFF2CC","FFEB9C","FFE699","FFFFCC","FFFF00","FFFDE9","FFFCE5"}
+    if rgb in known: return True
+    try:
+        r,g,b = int(rgb[0:2],16), int(rgb[2:4],16), int(rgb[4:6],16)
+        return (r>=235 and g>=230 and b<=220)
+    except: return False
+
+def yellow_header_indices(file_bytes: bytes, start_col="AI", end_col="ET") -> List[int]:
+    from openpyxl import load_workbook
+    wb = load_workbook(BytesIO(file_bytes), data_only=True)
+    ws = wb["matriz"]
+    c0 = excel_col_to_index(start_col)
+    c1 = excel_col_to_index(end_col)
+    out = []
+    for c in range(c0, c1+1):
+        cell = ws.cell(row=1, column=c)
+        rgb = None
+        if cell.fill:
+            rgb = (getattr(cell.fill.fgColor, "rgb", None)
+                   or getattr(cell.fill.start_color, "rgb", None))
+        if is_yellow(rgb):
+            out.append(c-1)  # 0-based para pandas
+    return out
+
+# ===================== Conteo celdas con datos =====================
+NEGATIVOS = {"", "0", "no", "false", "nan", "ninguno", "n/a", "na"}
+
+def cell_has_data(x) -> bool:
+    s = norm_text(x)
+    return s not in NEGATIVOS
+
+def header_marked_series(s: pd.Series) -> pd.Series:
+    # celdas con "dato": cualquier cosa que no sea vacío/negativo
+    return s.apply(cell_has_data)
+
+def counts_from_range(df_all: pd.DataFrame, file_bytes: bytes) -> pd.DataFrame:
+    # columnas objetivo AI:ET
+    ncols = df_all.shape[1]
+    L = max(0, min(AI_IDX, ncols-1))
+    R = max(0, min(ET_IDX, ncols-1))
+    if L > R:
+        L, R = 0, ncols-1
+
+    # intentar filtrar por encabezados amarillos; si no hay, tomar todas AI:ET
+    amarillas = [i for i in yellow_header_indices(file_bytes, "AI", "ET") if L <= i <= R]
+    idx_cols = amarillas if amarillas else list(range(L, R+1))
+
+    # limitar filas a las que tengan algún dato en esas columnas (evita filas vacías bajo la tabla)
+    df_rng = df_all.iloc[:, idx_cols].copy()
+    rowmask = df_rng.applymap(cell_has_data).any(axis=1)
+    df_rng = df_rng.loc[rowmask]
+
+    rows = []
+    for j, colname in zip(idx_cols, df_all.columns[idx_cols]):
+        freq = int(header_marked_series(df_rng[colname]).sum())
+        if freq > 0:
+            rows.append((str(colname), freq))
+    if not rows:
+        return pd.DataFrame({"Descriptor": [], "Frecuencia": []})
+    return pd.DataFrame(rows, columns=["Descriptor", "Frecuencia"])
+
+# ===================== Canonización / Pareto =====================
 def build_canon_maps(dic_df: pd.DataFrame) -> Tuple[Dict[str,str], Dict[str,str]]:
-    desc_by_norm = {}
-    cat_by_norm  = {}
+    desc_by_norm, cat_by_norm = {}, {}
     for _, r in dic_df.iterrows():
         d = str(r["Descriptor"]).strip()
         c = _force_cat(str(r["Categoría"]))
         desc_by_norm[norm_text(d)] = d
         cat_by_norm[norm_text(d)]  = c
-        # sinónimos → descriptor
         for syn in SINONIMOS.get(d, []):
             desc_by_norm[norm_text(syn)] = d
             cat_by_norm[norm_text(syn)]  = c
@@ -166,38 +231,9 @@ def canoniza(raw_desc: str, desc_by_norm: Dict[str,str]) -> str:
     n = norm_text(raw_desc)
     if n in desc_by_norm:
         return desc_by_norm[n]
-    # fuzzy
-    candidates = list(desc_by_norm.keys())
-    hit = get_close_matches(n, candidates, n=1, cutoff=0.82)
+    hit = get_close_matches(n, list(desc_by_norm.keys()), n=1, cutoff=0.82)
     return desc_by_norm[hit[0]] if hit else raw_desc.strip()
 
-# ===================== Conteo directo por columna (AI:ET) =====================
-def header_marked_series(s: pd.Series) -> pd.Series:
-    num = pd.to_numeric(s, errors="coerce").fillna(0) != 0
-    txt = s.astype(str).apply(norm_text)
-    mask = ~txt.isin(["", "no", "0", "nan", "none", "false"])
-    return num | mask
-
-def count_from_range(df_all: pd.DataFrame) -> pd.DataFrame:
-    ncols = df_all.shape[1]
-    L = max(0, min(AI_IDX, ncols-1))
-    R = max(0, min(ET_IDX, ncols-1))
-    if L > R:
-        L, R = 0, ncols-1  # fallback si faltan columnas
-
-    df_rng = df_all.iloc[:, L:R+1].copy()
-    # construir par (encabezado original, frecuencia)
-    rows = []
-    for c in df_rng.columns:
-        freq = int(header_marked_series(df_rng[c]).sum())
-        if freq > 0:
-            rows.append((str(c), freq))
-    if not rows:
-        return pd.DataFrame({"Descriptor": [], "Frecuencia": []})
-    out = pd.DataFrame(rows, columns=["Descriptor", "Frecuencia"])
-    return out
-
-# ===================== Pareto =====================
 def build_pareto(base_counts: pd.DataFrame, dic_df: pd.DataFrame) -> pd.DataFrame:
     if base_counts.empty:
         return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"])
@@ -206,8 +242,6 @@ def build_pareto(base_counts: pd.DataFrame, dic_df: pd.DataFrame) -> pd.DataFram
 
     df = base_counts.copy()
     df["Descriptor"] = df["Descriptor"].astype(str)
-
-    # canonizar (encabezados → descriptor oficial)
     df["Descriptor Canon"] = df["Descriptor"].apply(lambda x: canoniza(x, desc_by_norm))
     df["Categoría"] = df["Descriptor Canon"].apply(lambda d: _force_cat(cat_by_norm.get(norm_text(d), "OTROS FACTORES")))
 
@@ -261,12 +295,11 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         if cutoff_idx > 0:
             ws.conditional_format(1, 0, cutoff_idx, 6, {"type": "no_blanks", "format": fmt_yel})
 
-        # auxiliares para líneas
+        # auxiliares para las líneas
         ws.write(0, 9, "80/20");  ws.set_column("J:J", 6,  None, {"hidden": True})
         ws.write(0,10, "CorteX"); ws.set_column("K:K", 20, None, {"hidden": True})
         ws.write(0,11, "%");      ws.set_column("L:L", 6,  None, {"hidden": True})
-        for i in range(n):
-            ws.write_number(i+1, 9, 0.80)
+        for i in range(n): ws.write_number(i+1, 9, 0.80)
 
         corte_row = max(1, cutoff_idx)
         xcat = pareto.iloc[corte_row-1]["Descriptor"]
@@ -276,8 +309,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         # Barras
         chart = wb.add_chart({'type': 'column'})
         points = [{"fill": {"color": "#5B9BD5"}} for _ in range(n)]
-        for i in range(cutoff_idx, n):
-            points[i] = {"fill": {"color": "#A6A6A6"}}
+        for i in range(cutoff_idx, n): points[i] = {"fill": {"color": "#A6A6A6"}}
         chart.add_series({
             'name': 'Frecuencia',
             'categories': [sheet, 1, 1, n, 1],
@@ -307,7 +339,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         })
         chart.combine(h80)
 
-        # línea vertical en corte
+        # Corte vertical
         vline = wb.add_chart({'type': 'line'})
         vline.add_series({
             'name': '',
@@ -339,22 +371,22 @@ if not plantilla:
     st.stop()
 
 try:
-    df_raw = read_matriz(plantilla.getvalue())
+    df_all = read_matriz(plantilla.getvalue())
 except Exception as e:
     st.error(f"Error leyendo 'matriz': {e}")
     st.stop()
 
-df_all = normalize_columns(df_raw)
+df_all = normalize_columns(df_all)
 st.caption(f"Vista previa (primeras 20 de {len(df_all)} filas)")
 st.dataframe(df_all.head(20), use_container_width=True)
 
-# ---- Conteo directo por columna en AI:ET ----
-base = count_from_range(df_all)
+# ---- Conteo en AI:ET de celdas con datos (filtra filas vacías) ----
+base = counts_from_range(df_all, plantilla.getvalue())
 if base.empty or base["Frecuencia"].sum() == 0:
-    st.warning("No se detectaron marcas en el rango AI:ET. Revisá la plantilla.")
+    st.warning("No se hallaron datos en AI:ET (o no hay columnas válidas). Revisá la plantilla.")
     st.stop()
 
-# ---- Construir Pareto (canoniza + clasifica a 3 categorías) ----
+# ---- Pareto ----
 pareto = build_pareto(base, DICCIONARIO_EMBEBIDO)
 
 # ---- Mostrar con coma decimal en pantalla ----
