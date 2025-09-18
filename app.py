@@ -1,274 +1,398 @@
-# app.py — Generador de Pareto AUTOMÁTICO (solo subir matriz)
-# Requisitos: streamlit, openpyxl, pandas, numpy, matplotlib
-# Ejecuta: streamlit run app.py
+# Pareto Comunidad – MSP
+# - 1 archivo obligatorio: Plantilla (hoja 'matriz')
+# - 1 archivo opcional: 'DESCRIPTORES ACTUALIZADOS 2024 v2.xlsx' (diccionario Descriptor -> Categoría)
 
-from __future__ import annotations
+import re
+import unicodedata
 from io import BytesIO
-from typing import List, Tuple, Optional
+from typing import Dict, List, Optional
 
-import streamlit as st
-import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
-from openpyxl import load_workbook
-from openpyxl.utils import column_index_from_string, get_column_letter
-from openpyxl.drawing.image import Image as XLImage
+import pandas as pd
+import streamlit as st
 
-# --------------------- PARÁMETROS POR DEFECTO ---------------------
-TITULO_COMUNIDAD_DEF = "DESAMPARADOS NORTE"
-RANGO_DEF_DESDE = "AI"     # rango preferido (como tus plantillas)
-RANGO_DEF_HASTA = "ET"
-PROBAR_FILAS_HEADER = 8    # buscar encabezado en las primeras N filas
-COLOR_AMARILLOS = {"FFFF00", "FFEB9C", "FFF2CC", "FFE699", "FFD966", "FFF4CC"}
+st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide", initial_sidebar_state="collapsed")
+TOP_N_GRAFICO = 60
 
-# --------------------- UTILIDADES BASE ---------------------
-def _s(x):
-    if x is None:
+# ===================== Utilidades =====================
+def strip_accents(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(ch for ch in s if not unicodedata.combining(ch))
+
+def norm_text(s: Optional[str]) -> str:
+    if s is None:
         return ""
-    if isinstance(x, float) and np.isnan(x):
-        return ""
-    return str(x).strip()
+    s = str(s)
+    s = strip_accents(s).lower().strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
 
-def _wb_ws(file: BytesIO):
-    file.seek(0)
-    wb = load_workbook(filename=file, data_only=True)
-    return wb, wb.active  # hoja activa por defecto
-
-def _col_idx(letra: str) -> int:
-    return column_index_from_string(letra)
-
-def _rango_idx(desde: str, hasta: str) -> Tuple[int, int]:
-    return _col_idx(desde), _col_idx(hasta)
-
-def detectar_fila_encabezado(ws, idx_from: int, idx_to: int, probar_n: int) -> int:
-    """Devuelve la fila (1-based) con más celdas no vacías dentro del rango."""
-    best_row, best_cnt = 1, -1
-    top = min(probar_n, ws.max_row)
-    for r in range(1, top + 1):
-        cnt = 0
-        for c in range(idx_from, idx_to + 1):
-            if _s(ws.cell(r, c).value) != "":
-                cnt += 1
-        if cnt > best_cnt:
-            best_row, best_cnt = r, cnt
-    return best_row
-
-def headers_en_rango(ws, header_row: int, idx_from: int, idx_to: int) -> List[str]:
-    headers = []
-    for c in range(idx_from, idx_to + 1):
-        v = _s(ws.cell(header_row, c).value)
-        if v != "":
-            headers.append(v)
-    return headers
-
-def headers_amarillos(ws, header_row: int, idx_from: int, idx_to: int) -> List[str]:
-    amarillos = []
-    for c in range(idx_from, idx_to + 1):
-        cell = ws.cell(header_row, c)
-        fill = cell.fill
-        is_yellow = False
-        if fill and getattr(fill, "patternType", None):
-            fg = getattr(fill, "fgColor", None)
-            rgb = getattr(fg, "rgb", None) if fg is not None else None
-            if rgb:
-                rgb = rgb.upper().replace("#", "")
-                if len(rgb) == 8:  # ARGB -> RGB
-                    rgb = rgb[2:]
-                if rgb in COLOR_AMARILLOS:
-                    is_yellow = True
-        if is_yellow:
-            v = _s(cell.value) or get_column_letter(c)
-            if v:
-                amarillos.append(v)
-    return amarillos
-
-def construir_mapa_columna(ws, header_row: int) -> dict:
-    """Devuelve {nombre_columna_normalizado -> índice_columna} para TODA la hoja."""
-    mapa = {}
-    for c in range(1, ws.max_column + 1):
-        v = _s(ws.cell(header_row, c).value)
-        if v != "":
-            mapa[v] = c
-    return mapa
-
-def contar_frecuencias_por_posicion(ws, fila_inicio: int, columnas_idx: List[int]) -> pd.DataFrame:
-    """
-    Cuenta menciones por columna usando ÍNDICES de columna (robusto ante encabezados raros).
-    Se considera mención si la celda NO está vacía y NO es 0 (numérico).
-    """
-    freqs = []
-    max_r = ws.max_row
-    for c in columnas_idx:
-        count = 0
-        for r in range(fila_inicio, max_r + 1):
-            val = ws.cell(r, c).value
-            if val is None:
-                continue
-            s = _s(val)
-            if s == "":
-                continue
-            # descartar cero explícito
-            try:
-                num = float(s.replace(",", ".")) if isinstance(s, str) else float(val)
-                if num == 0:
-                    continue
-            except Exception:
-                pass
-            count += 1
-        nombre = _s(ws.cell(fila_inicio - 1, c).value)  # encabezado original
-        if nombre == "":
-            nombre = get_column_letter(c)
-        freqs.append({"DESCRIPTOR": nombre, "frecuencia": int(count)})
-    out = pd.DataFrame(freqs, columns=["DESCRIPTOR", "frecuencia"])
-    out = out[out["frecuencia"] > 0].sort_values("frecuencia", ascending=False).reset_index(drop=True)
+def make_unique_columns(cols: List[str]) -> List[str]:
+    seen, out = {}, []
+    for c in cols:
+        nc = norm_text(c)
+        seen[nc] = seen.get(nc, 0) + 1
+        out.append(nc if seen[nc] == 1 else f"{nc}__{seen[nc]}")
     return out
 
-def construir_pareto(df_freqs: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
-    total = int(df_freqs["frecuencia"].sum()) if not df_freqs.empty else 0
-    if total == 0:
-        return pd.DataFrame(columns=["#", "DESCRIPTOR", "frecuencia", "%", "acumul", "acumul%", "dentro_80"]), 0
-    df = df_freqs.copy()
-    df["%"] = (df["frecuencia"] / total) * 100.0
-    df["acumul"] = df["frecuencia"].cumsum()
-    df["acumul%"] = df["%"].cumsum()
-    df["#"] = np.arange(1, len(df) + 1)
-    df["dentro_80"] = df["acumul%"] <= 80.0
-    df = df[["#", "DESCRIPTOR", "frecuencia", "%", "acumul", "acumul%", "dentro_80"]]
-    return df, total
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out.columns = make_unique_columns([str(c) for c in out.columns])
+    return out
 
-def graficar_pareto(df_pareto: pd.DataFrame, titulo: str) -> plt.Figure:
-    if df_pareto.empty:
-        fig, ax = plt.subplots(figsize=(14, 6))
-        ax.text(0.5, 0.5, "Sin datos", ha="center", va="center", fontsize=16)
-        ax.axis("off")
-        return fig
-    x = np.arange(len(df_pareto))
-    frec = df_pareto["frecuencia"].values
-    acum_pct = df_pareto["acumul%"].values
-    fig, ax1 = plt.subplots(figsize=(18, 7), dpi=130)
-    ax1.bar(x, frec, label="Frecuencia", color="#4E79A7")
-    ax1.set_ylabel("Frecuencia")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(df_pareto["DESCRIPTOR"].values, rotation=65, ha="right")
-    ax1.grid(axis="y", alpha=0.25)
-    ax2 = ax1.twinx()
-    ax2.plot(x, acum_pct, marker="o", linewidth=2.2, label="Acumulado", color="#F28E2B")
-    ax2.set_ylabel("Porcentaje acumulado")
-    ax2.set_ylim(0, 105)
-    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, pos: f"{v:.0f}%"))
-    ax2.axhline(80, color="#707070", linestyle="--", linewidth=1.8, label="80/20")
-    idx80 = int(np.argmax(acum_pct >= 80)) if (acum_pct >= 80).any() else len(acum_pct) - 1
-    ax1.axvline(idx80, color="#D62728", linestyle="-", linewidth=1.6)
-    fig.suptitle(titulo, fontsize=16, y=0.98)
-    lines, labels = [], []
-    for ax in (ax1, ax2):
-        L = ax.get_legend_handles_labels()
-        lines += L[0]; labels += L[1]
-    ax1.legend(lines, labels, loc="upper right")
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-    return fig
+@st.cache_data(show_spinner=False)
+def read_matriz(file_bytes: bytes) -> pd.DataFrame:
+    return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
 
-def exportar_excel_con_grafico(df_pareto: pd.DataFrame, fig: plt.Figure) -> BytesIO:
-    bio = BytesIO()
-    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        df_pareto.to_excel(writer, sheet_name="PARETO", index=False)
+@st.cache_data(show_spinner=False)
+def read_diccionario(file_bytes: bytes) -> pd.DataFrame:
+    # intenta encontrar una hoja que tenga columnas 'Descriptor' y 'Categoria'
+    xls = pd.ExcelFile(BytesIO(file_bytes))
+    for sh in xls.sheet_names:
+        df = pd.read_excel(xls, sheet_name=sh)
+        cols = {norm_text(c): c for c in df.columns}
+        if "descriptor" in cols and ("categoria" in cols or "categoría" in cols):
+            cat_col = cols.get("categoria", cols.get("categoría"))
+            out = df[[cols["descriptor"], cat_col]].copy()
+            out.columns = ["Descriptor", "Categoría"]
+            out["Descriptor"] = out["Descriptor"].astype(str).str.strip()
+            out["Categoría"] = out["Categoría"].astype(str).str.strip()
+            out = out.dropna(subset=["Descriptor"]).drop_duplicates(subset=["Descriptor"], keep="first")
+            return out
+    raise ValueError("No se encontró hoja con columnas 'Descriptor' y 'Categoría'.")
+
+# ===================== Catálogo/Sinónimos (fallback) =====================
+CATEGORIA_POR_DESCRIPTOR_DEFAULT: Dict[str, str] = {
+    # ← lista base (se usa si NO subes diccionario). Se puede ampliar.
+    "Consumo de drogas": "DROGAS",
+    "Venta de drogas": "DROGAS",
+    "Hurto": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a personas": "DELITOS CONTRA LA PROPIEDAD",
+    "Falta de inversion social": "RIESGO SOCIAL",
+    "Consumo de alcohol en vía pública": "ALCOHOL",
+    "Deficiencia en la infraestructura vial": "ORDEN PÚBLICO",
+    "Robo a vivienda (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
+    "Contaminacion Sonica": "ORDEN PÚBLICO",
+    "Bunker (Puntos de venta y consumo de drogas)": "DROGAS",
+    "Robo a vivienda (Intimidación)": "DELITOS CONTRA LA PROPIEDAD",
+    "Disturbios(Riñas)": "ORDEN PÚBLICO",
+    "Robo a vehículos (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a vehiculos": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo a comercio (Intimidación)": "DELITOS CONTRA LA PROPIEDAD",
+    "Daños/Vandalismo": "DELITOS CONTRA LA PROPIEDAD",
+    "Robo de vehículos": "DELITOS CONTRA LA PROPIEDAD",
+    "Personas en situación de calle.": "ORDEN PÚBLICO",
+    "Personas con exceso de tiempo de ocio": "RIESGO SOCIAL",
+    "Lesiones": "DELITOS CONTRA LA VIDA",
+    "Estafas o defraudación": "DELITOS CONTRA LA PROPIEDAD",
+    "Lotes baldíos.": "ORDEN PÚBLICO",
+    "Falta de salubridad publica": "ORDEN PÚBLICO",
+    "Falta de oportunidades laborales.": "RIESGO SOCIAL",
+    "Contrabando": "DELITOS CONTRA LA PROPIEDAD",
+    "Problemas Vecinales.": "RIESGO SOCIAL",
+    "Robo a comercio (Tacha)": "DELITOS CONTRA LA PROPIEDAD",
+    "Receptación": "DELITOS CONTRA LA PROPIEDAD",
+}
+
+SINONIMOS: Dict[str, List[str]] = {
+    "Consumo de drogas": ["consumo de drogas", "consumen drogas", "consumo marihuana", "fumando piedra"],
+    "Venta de drogas": ["venta de drogas", "punto de venta", "narcomenudeo"],
+    "Hurto": ["hurto", "sustraccion"],
+    "Robo a personas": ["robo a personas", "asalto a persona", "atraco a persona"],
+    "Falta de inversion social": ["falta de inversion social"],
+    "Consumo de alcohol en vía pública": ["consumo de alcohol en via publica", "licores en via publica"],
+    "Deficiencia en la infraestructura vial": ["deficiencia en la infraestructura vial", "huecos", "baches"],
+    "Robo a vivienda (Tacha)": ["robo a vivienda tacha"],
+    "Contaminacion Sonica": ["contaminacion sonora", "ruido", "musica alta", "bulla"],
+    "Bunker (Puntos de venta y consumo de drogas)": ["bunker", "bunquer", "búnker"],
+    "Robo a vivienda (Intimidación)": ["robo a vivienda intimidacion", "asalto a vivienda"],
+    "Disturbios(Riñas)": ["disturbios", "riñas", "riña", "peleas"],
+    "Robo a vehículos (Tacha)": ["robo a vehiculos tacha"],
+    "Robo a vehiculos": ["robo de vehiculos", "robo carro", "robo moto"],
+    "Robo a comercio (Intimidación)": ["robo a comercio intimidacion", "asalto a comercio"],
+    "Daños/Vandalismo": ["danos", "vandalismo", "grafiti", "daño a la propiedad"],
+    "Robo de vehículos": ["robo de vehiculos"],
+    "Personas en situación de calle.": ["personas en situacion de calle", "indigencia", "habitantes de calle"],
+    "Personas con exceso de tiempo de ocio": ["exceso de tiempo de ocio", "ocio juvenil"],
+    "Lesiones": ["lesiones", "lesionados", "golpiza"],
+    "Estafas o defraudación": ["estafas", "defraudacion", "estafa"],
+    "Lotes baldíos.": ["lotes baldios", "lote baldio"],
+    "Falta de salubridad publica": ["falta de salubridad publica", "insalubridad"],
+    "Falta de oportunidades laborales.": ["falta de oportunidades laborales", "desempleo"],
+    "Contrabando": ["contrabando"],
+    "Problemas Vecinales.": ["problemas vecinales", "conflictos vecinales"],
+    "Robo a comercio (Tacha)": ["robo a comercio tacha"],
+    "Receptación": ["receptacion", "compra de robado", "reduccion"],
+}
+
+# ===================== Detección =====================
+def header_marked_series(s: pd.Series) -> pd.Series:
+    num = pd.to_numeric(s, errors="coerce").fillna(0) != 0
+    txt = s.astype(str).apply(norm_text)
+    mask = ~txt.isin(["", "no", "0", "nan", "none", "false"])
+    return num | mask
+
+def build_regex_by_desc() -> Dict[str, re.Pattern]:
+    compiled = {}
+    for desc, keys in SINONIMOS.items():
+        toks = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
+        if not toks:
+            toks = [re.escape(norm_text(desc))]
+        pat = r"(?:(?<=\s)|^)(" + "|".join(toks) + r")(?:(?=\s)|$)"
+        compiled[desc] = re.compile(pat)
+    return compiled
+
+def detect_by_headers(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
+    counts = {d: 0 for d in CATEGORIA_POR_DESCRIPTOR_DEFAULT.keys()}
+    for desc, pat in regex_by_desc.items():
+        hit_cols = [c for c in df_norm.columns if re.search(pat, " " + c + " ") is not None]
+        if not hit_cols:
+            continue
+        mask_any = None
+        for c in hit_cols:
+            m = header_marked_series(df_norm[c])
+            mask_any = m if mask_any is None else (mask_any | m)
+        if mask_any is not None:
+            counts[desc] += int(mask_any.sum())
+    return counts
+
+def guess_text_cols(df_norm: pd.DataFrame) -> List[str]:
+    hints = ["observ", "descr", "coment", "suger", "porque", "por que", "por qué", "detalle", "problema", "actividad", "insegur"]
+    out = []
+    for c in df_norm.columns:
+        s = df_norm[c]
+        if getattr(s, "dtype", None) == object or any(h in c for h in hints):
+            sample = s.astype(str).head(200).apply(norm_text)
+            if (sample != "").mean() > 0.05 or any(h in c for h in hints):
+                out.append(c)
+    return out
+
+def detect_in_text(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
+    counts = {d: 0 for d in CATEGORIA_POR_DESCRIPTOR_DEFAULT.keys()}
+    tcols = guess_text_cols(df_norm)
+    if not tcols:
+        return counts
+    for desc, pat in regex_by_desc.items():
+        mask_any = None
+        for c in tcols:
+            m = df_norm[c].astype(str).apply(norm_text).str.contains(pat, na=False)
+            mask_any = m if mask_any is None else (mask_any | m)
+        if mask_any is not None:
+            counts[desc] += int(mask_any.sum())
+    return counts
+
+def build_copilado(counts_headers: Dict[str, int], counts_text: Dict[str, int]) -> pd.DataFrame:
+    total = {}
+    # unión de claves conocidas
+    keys = set(counts_headers) | set(counts_text)
+    for d in keys:
+        total[d] = counts_headers.get(d, 0) + counts_text.get(d, 0)
+    rows = [(d, f) for d, f in total.items() if f > 0]
+    if not rows:
+        return pd.DataFrame({"Descriptor": [], "Frecuencia": []})
+    df = pd.DataFrame(rows, columns=["Descriptor", "Frecuencia"])
+    return df.sort_values(["Frecuencia", "Descriptor"], ascending=[False, True], ignore_index=True)
+
+def build_pareto(copilado: pd.DataFrame, cat_map: Dict[str, str]) -> pd.DataFrame:
+    if copilado.empty:
+        return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"])
+    df = copilado.copy()
+    # map de categoría
+    df["Categoría"] = df["Descriptor"].map(cat_map).fillna("")
+    # TOTAL sobre el que se sacan % (=> último acumulado)
+    total = int(df["Frecuencia"].sum())
+    df["Porcentaje"]  = (df["Frecuencia"] / total) * 100.0
+    df = df.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
+    df["% acumulado"] = df["Porcentaje"].cumsum()
+    df["Acumulado"]   = df["Frecuencia"].cumsum()
+    df["80/20"]       = "80%"
+    # Garantía: último acumulado = TOTAL
+    assert int(df["Acumulado"].iloc[-1]) == total
+    return df[["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"]]
+
+# ===================== Excel (formato idéntico) =====================
+def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> bytes:
+    from pandas import ExcelWriter
+    import xlsxwriter  # noqa: F401
+
+    out = BytesIO()
+    with ExcelWriter(out, engine="xlsxwriter") as writer:
+        sheet = "Pareto Comunidad"
+        pareto.to_excel(writer, index=False, sheet_name=sheet)
         wb = writer.book
-        ws = wb["PARETO"]
-        img_io = BytesIO()
-        fig.savefig(img_io, format="png", dpi=220, bbox_inches="tight")
-        img_io.seek(0)
-        ws.add_image(XLImage(img_io), f"B{len(df_pareto) + 4}")
-        writer._save()
-    bio.seek(0)
-    return bio
+        ws = writer.sheets[sheet]
+        n = len(pareto)
+        if not n:
+            return out.getvalue()
 
-# --------------------- UI ---------------------
-st.set_page_config(page_title="Generador de Pareto – Comunidad", layout="wide")
-st.title("Generador de Pareto – Comunidad")
+        # formatos (coma decimal, miles)
+        fmt_head = wb.add_format({"bold": True, "align": "center", "bg_color": "#D9E1F2", "border": 1})
+        fmt_pct  = wb.add_format({"num_format": "0,00%", "align": "right", "border": 1})
+        fmt_int  = wb.add_format({"num_format": "#,##0", "align": "center", "border": 1})
+        fmt_txt  = wb.add_format({"align": "left", "border": 1})
+        fmt_cent = wb.add_format({"align": "center"})
+        fmt_yel  = wb.add_format({"bg_color": "#FFF2CC"})
 
-comunidad = st.text_input("Nombre de la comunidad", value=TITULO_COMUNIDAD_DEF)
-archivo = st.file_uploader("Sube la MATRIZ (.xlsx)", type=["xlsx"])
+        # columnas/encabezado
+        ws.set_row(0, None, fmt_head)
+        ws.set_column("A:A", 22, fmt_txt)
+        ws.set_column("B:B", 52, fmt_txt)
+        ws.set_column("C:C", 12, fmt_int)
+        ws.set_column("D:D", 12, fmt_pct)   # Porcentaje
+        ws.set_column("E:E", 12, fmt_pct)   # % acumulado
+        ws.set_column("F:F", 12, fmt_int)   # Acumulado
+        ws.set_column("G:G", 8,  fmt_cent)  # 80/20
 
-# Opciones avanzadas (por si tu rango no es AI–ET)
-with st.expander("Opciones avanzadas (si tu plantilla usa otro rango/hoja)"):
-    hoja_manual = st.text_input("Nombre de la hoja (vacío = activa)", value="")
-    rango_desde = st.text_input("Rango desde (letra Excel)", value=RANGO_DEF_DESDE).strip().upper()
-    rango_hasta = st.text_input("Rango hasta (letra Excel)", value=RANGO_DEF_HASTA).strip().upper()
+        # pintar ≤80% en amarillo
+        cutoff_idx = int((pareto["% acumulado"] <= 80).sum())
+        if cutoff_idx > 0:
+            ws.conditional_format(1, 0, cutoff_idx, 6, {"type": "no_blanks", "format": fmt_yel})
 
-if not archivo:
-    st.info("Sube tu matriz. El sistema detecta la fila de encabezados y cuenta por posición.")
+        # columnas auxiliares (ocultas)
+        ws.write(0, 9, "80/20");  ws.set_column("J:J", 6,  None, {"hidden": True})
+        ws.write(0,10, "CorteX"); ws.set_column("K:K", 20, None, {"hidden": True})
+        ws.write(0,11, "%");      ws.set_column("L:L", 6,  None, {"hidden": True})
+        for i in range(n):
+            ws.write_number(i+1, 9, 0.80)  # 80%
+
+        corte_row = max(1, cutoff_idx)
+        xcat = pareto.iloc[corte_row-1]["Descriptor"]
+        ws.write(1,10, xcat); ws.write(2,10, xcat)
+        ws.write_number(1,11, 0.0); ws.write_number(2,11, 1.0)
+
+        # gráfico grande
+        chart = wb.add_chart({'type': 'column'})
+        points = [{"fill": {"color": "#5B9BD5"}} for _ in range(n)]
+        for i in range(cutoff_idx, n):
+            points[i] = {"fill": {"color": "#A6A6A6"}}
+        chart.add_series({
+            'name': 'Frecuencia',
+            'categories': [sheet, 1, 1, n, 1],
+            'values':     [sheet, 1, 2, n, 2],
+            'points': points,
+        })
+
+        line = wb.add_chart({'type': 'line'})
+        line.add_series({
+            'name': '% acumulado',
+            'categories': [sheet, 1, 1, n, 1],
+            'values':     [sheet, 1, 4, n, 4],
+            'y2_axis': True,
+            'line': {'color': '#ED7D31', 'width': 2.0}
+        })
+        chart.combine(line)
+
+        h80 = wb.add_chart({'type': 'line'})
+        h80.add_series({
+            'name': '80/20',
+            'categories': [sheet, 1, 1, n, 1],
+            'values':     [sheet, 1, 9, n, 9],
+            'y2_axis': True,
+            'line': {'color': '#7F7F7F', 'width': 1.25}
+        })
+        chart.combine(h80)
+
+        vline = wb.add_chart({'type': 'line'})
+        vline.add_series({
+            'name': '',
+            'categories': [sheet, 1, 10, 2, 10],  # misma categoría → vertical
+            'values':     [sheet, 1, 11, 2, 11],  # 0→1
+            'y2_axis': True,
+            'line': {'color': '#C00000', 'width': 2.25},
+            'marker': {'type': 'none'},
+        })
+        chart.combine(vline)
+
+        chart.set_title({'name': titulo})
+        chart.set_plotarea({'border': {'none': True}})
+        chart.set_chartarea({'border': {'none': True}})
+        chart.set_x_axis({'num_font': {'rotation': -50}})
+        chart.set_y_axis({'major_gridlines': {'visible': False}})
+        chart.set_y2_axis({'min': 0, 'max': 1, 'major_unit': 0.1, 'num_format': '0%'})
+        chart.set_legend({'position': 'bottom'})
+
+        ws.insert_chart(1, 9, chart, {'x_scale': 1.9, 'y_scale': 1.6})
+
+    return out.getvalue()
+
+# ===================== UI =====================
+st.title("Pareto Comunidad – MSP (total correcto y categorías del diccionario)")
+
+colA, colB = st.columns([1.3, 1])
+with colA:
+    plantilla = st.file_uploader("📄 Subí la Plantilla (XLSX) – hoja `matriz`", type=["xlsx"])
+with colB:
+    dicc = st.file_uploader("🔎 (Opcional) Subí el diccionario de descriptores (XLSX)", type=["xlsx"])
+
+if not plantilla:
+    st.info("Subí la Plantilla para procesar.")
     st.stop()
 
-# --------------------- LECTURA Y DETECCIÓN ROBUSTA ---------------------
+# leer datos
 try:
-    archivo.seek(0)
-    wb = load_workbook(filename=archivo, data_only=True)
-    ws = wb[hoja_manual] if hoja_manual.strip() in wb.sheetnames else wb.active
+    df_raw = read_matriz(plantilla.getvalue())
 except Exception as e:
-    st.error(f"No se pudo abrir el Excel: {e}")
+    st.error(f"Error leyendo 'matriz': {e}")
     st.stop()
 
-# 1) Rango preferido (AI–ET, editable) → si no da, se expande a todo el ancho de la hoja
-try:
-    idx_from, idx_to = _rango_idx(rango_desde or RANGO_DEF_DESDE, rango_hasta or RANGO_DEF_HASTA)
-except Exception:
-    st.error("Rango inválido. Usa letras de columnas (p. ej., AI y ET).")
+df = normalize_columns(df_raw)
+st.caption(f"Vista previa (primeras 20 de {len(df)} filas)")
+st.dataframe(df.head(20), use_container_width=True)
+
+# construir catálogo desde diccionario (si lo suben)
+cat_map = CATEGORIA_POR_DESCRIPTOR_DEFAULT.copy()
+if dicc is not None:
+    try:
+        dic_df = read_diccionario(dicc.getvalue())
+        # crear map exacto Descriptor->Categoría desde tu archivo
+        cat_map = {row["Descriptor"]: row["Categoría"] for _, row in dic_df.iterrows()}
+        st.success("Diccionario de descriptores cargado. Se usará Categoría del archivo.")
+    except Exception as e:
+        st.warning(f"No se pudo leer el diccionario: {e}. Se usa el catálogo por defecto.")
+
+# detección
+def build_regex_all():
+    comp = {}
+    base_keys = set(cat_map.keys()) | set(SINONIMOS.keys())
+    for d in base_keys:
+        keys = SINONIMOS.get(d, []) + [d]
+        toks = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
+        if not toks:
+            continue
+        comp[d] = re.compile(r"(?:(?<=\s)|^)(" + "|".join(toks) + r")(?:(?=\s)|$)")
+    return comp
+
+with st.spinner("Procesando (encabezados + texto)…"):
+    regex = build_regex_all()
+    # para conteo por encabezados uso claves del catálogo default (para no explotar)
+    counts_h = detect_by_headers(df, regex)
+    counts_t = detect_in_text(df, regex)
+    copilado = build_copilado(counts_h, counts_t)
+    pareto   = build_pareto(copilado, cat_map)
+
+if copilado.empty:
+    st.warning("No se detectaron descriptores. Revisa sinónimos o comparte un ejemplo con texto.")
     st.stop()
 
-header_row = detectar_fila_encabezado(ws, idx_from, idx_to, PROBAR_FILAS_HEADER)
-amarillos = headers_amarillos(ws, header_row, idx_from, idx_to)
-if not amarillos:
-    # Fallback 1: todos los encabezados no vacíos del rango preferido
-    amarillos = headers_en_rango(ws, header_row, idx_from, idx_to)
+# TOTAL visible (último acumulado)
+TOTAL = int(pareto["Acumulado"].iloc[-1])
 
-# Si aun así no hay encabezados útiles, expandir al ancho completo de la hoja
-if not amarillos:
-    idx_from, idx_to = 1, ws.max_column
-    header_row = detectar_fila_encabezado(ws, idx_from, idx_to, PROBAR_FILAS_HEADER)
-    amarillos = headers_amarillos(ws, header_row, idx_from, idx_to) or headers_en_rango(ws, header_row, idx_from, idx_to)
+st.subheader(f"Pareto Comunidad (TOTAL = {TOTAL:,})")
+st.dataframe(pareto, use_container_width=True)
 
-if not amarillos:
-    st.error("No se ubicaron encabezados en la fila detectada. Revisa que tu plantilla tenga títulos en una sola fila.")
-    st.stop()
+# vista rápida
+plot_df = pareto.head(TOP_N_GRAFICO).copy()
+st.subheader("Gráfico (vista rápida)")
+st.bar_chart(plot_df.set_index("Descriptor")["Frecuencia"])
+st.line_chart(plot_df.set_index("Descriptor")["% acumulado"])
 
-# 2) Mapear nombres → índices reales (porque contamos por posición)
-mapa = construir_mapa_columna(ws, header_row)
-cols_idx = [mapa[n] for n in amarillos if n in mapa]
+# descarga excel definitivo
+st.subheader("Descargar Excel final")
+st.download_button(
+    "⬇️ Pareto Comunidad (Excel con formato y gráfico)",
+    data=export_excel(pareto, titulo="PARETO COMUNIDAD"),
+    file_name="Pareto_Comunidad.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
-if not cols_idx:
-    st.error("Los encabezados detectados no coinciden con columnas reales. Verifica celdas combinadas o espacios extraños.")
-    st.stop()
 
-# 3) Conteo de menciones (no vacío y ≠ 0) desde la fila siguiente al encabezado
-freqs = contar_frecuencias_por_posicion(ws, header_row + 1, cols_idx)
-if freqs.empty:
-    st.error("No se encontraron datos en las columnas detectadas (todas vacías o 0).")
-    st.stop()
-
-# --------------------- PARETO + DESCARGAS ---------------------
-df_pareto, total = construir_pareto(freqs)
-st.markdown(f"**Filas analizadas:** {ws.max_row - header_row}  •  **Columnas consideradas:** {len(cols_idx)}  •  **Total (Σ frecuencia):** {total}")
-
-# Mostrar con formato %
-mostrar = df_pareto.copy()
-mostrar["%"] = mostrar["%"].map(lambda v: f"{v:,.2f}%")
-mostrar["acumul%"] = mostrar["acumul%"].map(lambda v: f"{v:,.2f}%")
-mostrar["dentro_80"] = mostrar["dentro_80"].map(lambda b: "Sí" if bool(b) else "No")
-st.subheader("Tabla de Pareto")
-st.dataframe(mostrar, use_container_width=True)
-
-fig = graficar_pareto(df_pareto, f"PARETO COMUNIDAD {(_s(comunidad).upper() or 'SIN NOMBRE')}")
-st.pyplot(fig, use_container_width=True)
-
-c1, c2 = st.columns(2)
-with c1:
-    png_io = BytesIO(); fig.savefig(png_io, format="png", dpi=220, bbox_inches="tight"); png_io.seek(0)
-    st.download_button("⬇️ Descargar gráfico (PNG)", data=png_io,
-                       file_name=f"pareto_{_s(comunidad).replace(' ','_').lower()}.png",
-                       mime="image/png")
-with c2:
-    xio = exportar_excel_con_grafico(df_pareto, fig)
-    st.download_button("⬇️ Descargar Excel (tabla + gráfico)", data=xio,
-                       file_name=f"pareto_{_s(comunidad).replace(' ','_').lower()}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
