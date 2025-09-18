@@ -246,7 +246,7 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     st.pyplot(fig)
 
 def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
-    """XLSX con columnas ordenadas, sombreado 80% real, barras por punto y TOTAL."""
+    """XLSX con columnas ordenadas, sombreado 80% real (con borde), líneas horizontal/vertical y TOTAL."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         hoja = "Pareto"
@@ -281,23 +281,32 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         vals = f"=Pareto!$C$2:$C${n+1}"
         pcts = f"=Pareto!$E$2:$E${n+1}"
 
-        # TOTAL (restaurado)
+        # TOTAL
         total = int(df_par["frecuencia"].sum())
         ws.write(n + 2, 1, "TOTAL:", total_fmt)
         ws.write(n + 2, 2, total, total_fmt)
 
-        # Sombreado de filas hasta 80% real (A:G)
+        # ----- Sombreado con borde hasta 80% real -----
         try:
             idxs = np.where(df_par["segmento_real"].to_numpy() == "80%")[0]
             if len(idxs) > 0:
                 last = int(idxs.max())
-                orange_bg = wb.add_format({"bg_color": ORANGE, "font_color": "#000000"})
-                ws.conditional_format(1, 0, 1 + last, 6, {"type": "no_blanks", "format": orange_bg})
+                orange_bg_border = wb.add_format({
+                    "bg_color": ORANGE,
+                    "font_color": "#000000",
+                    "border": 1
+                })
+                # A(0) .. G(6)
+                ws.conditional_format(1, 0, 1 + last, 6, {
+                    "type": "no_blanks",
+                    "format": orange_bg_border
+                })
         except Exception:
             pass
 
-        # Gráfico: barras coloreadas por 'segmento_real'
+        # ----- Gráfico -----
         chart = wb.add_chart({"type": "column"})
+        # Barras por punto según 80/20 real
         points = [{"fill": {"color": (ORANGE if s == "80%" else SKY)}}
                   for s in df_par["segmento_real"]]
         chart.add_series({
@@ -307,6 +316,7 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
             "points": points,
         })
 
+        # Línea % acumulado (eje derecho)
         line = wb.add_chart({"type": "line"})
         line.add_series({
             "name": "% acumulado",
@@ -316,7 +326,57 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
             "marker": {"type": "circle"},
         })
 
+        # Serie auxiliar: línea horizontal al 80% (eje derecho)
+        # Escribimos una columna oculta con 0.8 para todas las categorías:
+        const_col = 7  # H
+        ws.write(0, const_col, "const_80")
+        for i in range(n):
+            ws.write(1 + i, const_col, 0.8)
+        # Serie que dibuja la línea horizontal:
+        const_range = f"=Pareto!$H$2:$H${n+1}"
+        hline = wb.add_chart({"type": "line"})
+        hline.add_series({
+            "name": "80%",
+            "categories": cats,
+            "values": const_range,
+            "y2_axis": True,
+            "line": {"dash_type": "dash"},
+            "marker": {"type": "none"},
+        })
+
+        # Serie auxiliar: vertical en el punto de corte (eje derecho)
+        # Creamos una columna I con solo un valor (0.8) en la fila del corte;
+        # el resto, vacío. Luego usamos barras de error para que se vea como línea vertical.
+        vcol = 8  # I
+        ws.write(0, vcol, "vert_cut")
+        cut_idx = None
+        if (df_par["segmento_real"] == "80%").any():
+            cut_idx = int(np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max())
+        for i in range(n):
+            if cut_idx is not None and i == cut_idx:
+                ws.write(1 + i, vcol, 0.8)
+            else:
+                ws.write(1 + i, vcol, "")  # dejar hueco
+        v_range = f"=Pareto!$I$2:$I${n+1}"
+        vline = wb.add_chart({"type": "line"})
+        vline.add_series({
+            "name": None,
+            "categories": cats,
+            "values": v_range,
+            "y2_axis": True,
+            "marker": {"type": "none"},
+            "line": {"none": True},
+            "y_error_bars": {"type": "both", "value": 1.1},  # barra de error larga = línea vertical
+        })
+
+        # Ocultamos columnas auxiliares H:I
+        ws.set_column("H:I", None, None, {"hidden": True})
+
+        # Combinamos todas las series
         chart.combine(line)
+        chart.combine(hline)
+        chart.combine(vline)
+
         chart.set_y_axis({"name": "Frecuencia"})
         chart.set_y2_axis({"name": "Porcentaje acumulado",
                            "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
@@ -378,7 +438,7 @@ if seleccion:
                        "porcentaje", "pct_acum", "acumulado", "segmento"]]
     mostrar = mostrar.rename(columns={"pct_acum": "porcentaje acumulado"})
     mostrar["porcentaje"] = mostrar["porcentaje"].map(lambda x: f"{x:.2f}%")
-    mostrar["porcentaje acumulado"] = mostrar["porcentaje acumulado"].map(lambda x: f"{x:.2f}%")
+    mostrar["porcentaje acumulado"] = mostrar["porcentaje acumulado"].map(lambda x: f"{x:.2f}%" )
 
     c1, c2 = st.columns([1, 1], gap="large")
     with c1:
@@ -408,6 +468,7 @@ if seleccion:
         )
 else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
+
 
 
 
