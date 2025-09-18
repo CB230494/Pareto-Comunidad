@@ -1,10 +1,9 @@
-# app.py — Pareto con catálogo embebido (normalizado)
-# ---------------------------------------------------
-# - Selección múltiple de descriptores
-# - Edición de frecuencias
-# - Tabla y gráfico de Pareto
-# - Exportar a Excel (con gráfico incrustado) y CSV
-# ---------------------------------------------------
+# app.py — Pareto con 80/20 exacto, colores vivos, título editable y persistencia de frecuencias
+# ----------------------------------------------------------------------------------------------
+# Requisitos:
+#   pip install streamlit pandas matplotlib xlsxwriter
+#   streamlit run app.py
+# ----------------------------------------------------------------------------------------------
 
 import io
 from typing import List, Dict
@@ -16,10 +15,9 @@ import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 
-
-# =====================================================================
-# 1) CATÁLOGO EMBEBIDO (normalizado: mayúsculas/minúsculas “correctas”)
-# =====================================================================
+# =========================
+# 1) Catálogo embebido (normalizado)
+# =========================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
     {"categoria": "Delito", "descriptor": "Abigeato (robo y destace de ganado)"},
@@ -190,54 +188,67 @@ CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Robo de equipo agrícola"},
 ]
 
-# =====================================================================
-# 2) CÁLCULO Y GRÁFICO DE PARETO
-# =====================================================================
+# =========================
+# 2) Utilidades
+# =========================
+ORANGE = "#FF8C00"  # naranja vivo
+SKY    = "#87CEEB"  # celeste para el resto
+
 def calcular_pareto(df_in: pd.DataFrame) -> pd.DataFrame:
-    """Recibe columnas: descriptor, categoria, frecuencia."""
+    """df_in columnas: descriptor, categoria, frecuencia -> Pareto ordenado."""
     df = df_in.copy()
     df["frecuencia"] = pd.to_numeric(df["frecuencia"], errors="coerce").fillna(0).astype(int)
     df = df[df["frecuencia"] > 0]
     if df.empty:
-        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0)
+        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0, marca80=False)
 
     df = df.sort_values("frecuencia", ascending=False)
     total = int(df["frecuencia"].sum())
     df["porcentaje"] = (df["frecuencia"] / total * 100).round(2)
-    df["acumulado"] = df["frecuencia"].cumsum()
-    df["pct_acum"] = (df["acumulado"] / total * 100).round(2)
+    df["acumulado"]  = df["frecuencia"].cumsum()
+    df["pct_acum"]   = (df["acumulado"] / total * 100).round(2)
+    # Regla exacta: marcar solo ≤ 80.00
+    df["marca80"]    = df["pct_acum"] <= 80.00
     return df.reset_index(drop=True)
 
-
-def dibujar_pareto(df_par: pd.DataFrame):
+def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     if df_par.empty:
-        st.info("Ingresa frecuencias (>0) para ver el gráfico de Pareto.")
+        st.info("Ingresa frecuencias (>0) para ver el gráfico.")
         return
-    x = np.arange(len(df_par))
-    freqs = df_par["frecuencia"].to_numpy()
+
+    x        = np.arange(len(df_par))
+    freqs    = df_par["frecuencia"].to_numpy()
     pct_acum = df_par["pct_acum"].to_numpy()
+    marked   = df_par["marca80"].to_numpy()
+
+    # Colores por barra según 80/20
+    colors = [ORANGE if m else SKY for m in marked]
 
     fig, ax1 = plt.subplots(figsize=(14, 5))
-    ax1.bar(x, freqs)  # sin especificar colores (recomendación)
+    ax1.bar(x, freqs, color=colors)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
     ax1.set_xticklabels(df_par["descriptor"].tolist(), rotation=75, ha="right")
+    ax1.set_title(titulo if titulo.strip() else "Pareto — Frecuencia y % acumulado")
 
     ax2 = ax1.twinx()
     ax2.plot(x, pct_acum, marker="o")
     ax2.set_ylabel("% acumulado")
     ax2.set_ylim(0, 110)
 
-    # Líneas 80% (horizontal) y corte (vertical)
-    idx80 = np.argmax(pct_acum >= 80) if np.any(pct_acum >= 80) else len(pct_acum) - 1
+    # Línea horizontal al 80% y vertical en el último elemento marcado (≤80%)
+    if np.any(marked):
+        cut_idx = np.where(marked)[0].max()
+    else:
+        cut_idx = -1  # no marcado
     ax2.axhline(80, linestyle="--")
-    ax1.axvline(idx80, linestyle=":")
+    if cut_idx >= 0:
+        ax1.axvline(cut_idx, linestyle=":", color="k")
 
     st.pyplot(fig)
 
-
-def exportar_excel_con_grafico(df_par: pd.DataFrame) -> bytes:
-    """Crea un XLSX con tabla + gráfico estilo Pareto."""
+def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
+    """Genera XLSX con tabla + gráfico; colorea filas ≤80% en naranja vivo."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         hoja = "Pareto"
@@ -246,12 +257,10 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame) -> bytes:
         ws = writer.sheets[hoja]
 
         n = len(df_par)
-        # RANGOS
         cats = f"=Pareto!$A$2:$A${n+1}"
         vals = f"=Pareto!$C$2:$C${n+1}"
         pcts = f"=Pareto!$F$2:$F${n+1}"
 
-        # FORMATO
         ws.set_column("A:A", 55)
         ws.set_column("B:B", 18)
         ws.set_column("C:C", 12)
@@ -263,51 +272,58 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame) -> bytes:
         ws.write(n+2, 1, "TOTAL:")
         ws.write(n+2, 2, total)
 
-        # GRÁFICO
         chart = wb.add_chart({"type": "column"})
         chart.add_series({"name": "Frecuencia", "categories": cats, "values": vals})
-
         line = wb.add_chart({"type": "line"})
         line.add_series({"name": "% acumulado", "categories": cats, "values": pcts, "y2_axis": True, "marker": {"type": "circle"}})
-
         chart.combine(line)
         chart.set_y_axis({"name": "Frecuencia"})
         chart.set_y2_axis({"name": "% acumulado", "min": 0, "max": 110, "major_unit": 10})
-        chart.set_title({"name": "PARETO – Frecuencia y % acumulado"})
+        chart.set_title({"name": titulo if titulo.strip() else "PARETO – Frecuencia y % acumulado"})
         chart.set_legend({"position": "bottom"})
         chart.set_size({"width": 1180, "height": 420})
         ws.insert_chart("H2", chart)
 
-        # Sombrear filas hasta 80%
+        # Sombreado naranja solo filas con pct_acum ≤ 80.00
         try:
-            idx80 = int(np.argmax(df_par["pct_acum"].values >= 80))
-            yellow = wb.add_format({"bg_color": "#FFF2CC"})
-            ws.conditional_format(1, 0, idx80+1, 5, {"type": "no_blanks", "format": yellow})
+            # Encuentra última fila que cumple ≤80.00
+            idxs = np.where(df_par["pct_acum"].to_numpy() <= 80.00)[0]
+            if len(idxs) > 0:
+                last = int(idxs.max())
+                orange_fmt = wb.add_format({"bg_color": ORANGE, "font_color": "#000000"})
+                ws.conditional_format(1, 0, 1 + last, 5, {"type": "no_blanks", "format": orange_fmt})
         except Exception:
             pass
 
     return output.getvalue()
 
+# =========================
+# 3) Estado y UI
+# =========================
+# Persistencia de frecuencias por descriptor en la sesión:
+if "freq_map" not in st.session_state:
+    st.session_state.freq_map = {}  # {descriptor: frecuencia}
 
-# =====================================================================
-# 3) INTERFAZ
-# =====================================================================
 st.title("Pareto de Descriptores")
-st.caption("Catálogo embebido y normalizado. Selecciona descriptores, asigna frecuencias y exporta el Pareto.")
+st.caption("Selecciona descriptores, asigna frecuencias y exporta. Regla 80/20: marcado hasta 80.00% (no incluye 80.01%).")
 
+# Título editable del gráfico/Excel
+titulo = st.text_input("Título del Pareto (opcional)", value="Pareto Comunidad")
+
+# Selector múltiple (no resetea frecuencias ya capturadas)
 cat_df = pd.DataFrame(CATALOGO).sort_values(["categoria", "descriptor"]).reset_index(drop=True)
-
-st.subheader("1) Selecciona descriptores")
 opciones = cat_df["descriptor"].tolist()
-seleccion = st.multiselect("Escoge uno o varios descriptores", options=opciones, default=[])
+seleccion = st.multiselect("1) Escoge uno o varios descriptores", options=opciones, default=[])
 
 st.subheader("2) Asigna la frecuencia")
 if seleccion:
-    df_sel = cat_df[cat_df["descriptor"].isin(seleccion)].copy()
-    df_sel["frecuencia"] = 0
+    # Construye dataframe de edición fusionando con lo ya guardado
+    base = cat_df[cat_df["descriptor"].isin(seleccion)].copy()
+    # Coloca la frecuencia previamente capturada si existe
+    base["frecuencia"] = [st.session_state.freq_map.get(d, 0) for d in base["descriptor"]]
 
-    df_edit = st.data_editor(
-        df_sel,
+    edit = st.data_editor(
+        base,
         key="editor_freq",
         num_rows="fixed",
         use_container_width=True,
@@ -318,8 +334,16 @@ if seleccion:
         },
     )
 
+    # Actualiza el mapa persistente con lo que el usuario edite
+    for _, row in edit.iterrows():
+        st.session_state.freq_map[row["descriptor"]] = int(row["frecuencia"])
+
+    # Arma el dataframe completo para Pareto (solo seleccionados con su frecuencia vigente)
+    df_in = edit[["descriptor", "categoria"]].copy()
+    df_in["frecuencia"] = df_in["descriptor"].map(st.session_state.freq_map).fillna(0).astype(int)
+
     st.subheader("3) Pareto")
-    tabla = calcular_pareto(df_edit[["descriptor", "categoria", "frecuencia"]])
+    tabla = calcular_pareto(df_in)
 
     c1, c2 = st.columns([1, 1], gap="large")
     with c1:
@@ -327,11 +351,15 @@ if seleccion:
         if tabla.empty:
             st.info("Ingresa frecuencias (>0) para ver la tabla.")
         else:
-            st.dataframe(tabla, use_container_width=True, hide_index=True)
+            st.dataframe(
+                tabla,
+                use_container_width=True,
+                hide_index=True
+            )
 
     with c2:
         st.markdown("**Gráfico de Pareto**")
-        dibujar_pareto(tabla)
+        dibujar_pareto(tabla, titulo)
 
     st.subheader("4) Exportar")
     if not tabla.empty:
@@ -343,11 +371,12 @@ if seleccion:
         )
         st.download_button(
             "⬇️ Descargar Excel con gráfico",
-            data=exportar_excel_con_grafico(tabla),
+            data=exportar_excel_con_grafico(tabla, titulo),
             file_name="pareto_descriptores.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:
-    st.info("Selecciona al menos un descriptor para continuar.")
+    st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias ya ingresadas se conservarán si más tarde agregas más descriptores.")
+
 
 
