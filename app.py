@@ -1,4 +1,4 @@
-# app.py — Pareto con 80/20 exacto, colores vivos, título editable y persistencia de frecuencias
+# app.py — Pareto con 80/20 exacto, colores por punto en Excel, % con 2 decimales y etiqueta 80%/20%
 # ----------------------------------------------------------------------------------------------
 # Requisitos:
 #   pip install streamlit pandas matplotlib xlsxwriter
@@ -192,23 +192,22 @@ CATALOGO: List[Dict[str, str]] = [
 # 2) Utilidades
 # =========================
 ORANGE = "#FF8C00"  # naranja vivo
-SKY    = "#87CEEB"  # celeste para el resto
+SKY    = "#87CEEB"  # celeste
 
 def calcular_pareto(df_in: pd.DataFrame) -> pd.DataFrame:
-    """df_in columnas: descriptor, categoria, frecuencia -> Pareto ordenado."""
     df = df_in.copy()
     df["frecuencia"] = pd.to_numeric(df["frecuencia"], errors="coerce").fillna(0).astype(int)
     df = df[df["frecuencia"] > 0]
     if df.empty:
-        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0, marca80=False)
+        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0, segmento="20%")
 
     df = df.sort_values("frecuencia", ascending=False)
     total = int(df["frecuencia"].sum())
     df["porcentaje"] = (df["frecuencia"] / total * 100).round(2)
     df["acumulado"]  = df["frecuencia"].cumsum()
     df["pct_acum"]   = (df["acumulado"] / total * 100).round(2)
-    # Regla exacta: marcar solo ≤ 80.00
-    df["marca80"]    = df["pct_acum"] <= 80.00
+    # Etiqueta 80%/20% (regla exacta ≤ 80.00)
+    df["segmento"]   = np.where(df["pct_acum"] <= 80.00, "80%", "20%")
     return df.reset_index(drop=True)
 
 def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
@@ -219,10 +218,7 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     x        = np.arange(len(df_par))
     freqs    = df_par["frecuencia"].to_numpy()
     pct_acum = df_par["pct_acum"].to_numpy()
-    marked   = df_par["marca80"].to_numpy()
-
-    # Colores por barra según 80/20
-    colors = [ORANGE if m else SKY for m in marked]
+    colors   = [ORANGE if seg == "80%" else SKY for seg in df_par["segmento"]]
 
     fig, ax1 = plt.subplots(figsize=(14, 5))
     ax1.bar(x, freqs, color=colors)
@@ -236,90 +232,109 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax2.set_ylabel("% acumulado")
     ax2.set_ylim(0, 110)
 
-    # Línea horizontal al 80% y vertical en el último elemento marcado (≤80%)
-    if np.any(marked):
-        cut_idx = np.where(marked)[0].max()
-    else:
-        cut_idx = -1  # no marcado
-    ax2.axhline(80, linestyle="--")
-    if cut_idx >= 0:
+    # Líneas 80/20
+    if (df_par["segmento"] == "80%").any():
+        cut_idx = np.where(df_par["segmento"].to_numpy() == "80%")[0].max()
         ax1.axvline(cut_idx, linestyle=":", color="k")
+    ax2.axhline(80, linestyle="--")
 
     st.pyplot(fig)
 
 def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
-    """Genera XLSX con tabla + gráfico; colorea filas ≤80% en naranja vivo."""
+    """XLSX con tabla (porcentaje y pct_acum en formato 0.00%) y gráfico con colores por punto."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         hoja = "Pareto"
-        df_par.to_excel(writer, sheet_name=hoja, index=False, startrow=0, startcol=0)
+
+        # Copia para Excel: porcentajes como fracción (0-1) para mostrar "0.00%"
+        df_x = df_par.copy()
+        df_x["porcentaje"] = (df_x["porcentaje"] / 100.0).round(4)
+        df_x["pct_acum"]   = (df_x["pct_acum"] / 100.0).round(4)
+
+        df_x.to_excel(writer, sheet_name=hoja, index=False, startrow=0, startcol=0)
         wb = writer.book
         ws = writer.sheets[hoja]
 
-        n = len(df_par)
+        n = len(df_x)
         cats = f"=Pareto!$A$2:$A${n+1}"
         vals = f"=Pareto!$C$2:$C${n+1}"
         pcts = f"=Pareto!$F$2:$F${n+1}"
 
+        # Formatos
+        pct_fmt = wb.add_format({"num_format": "0.00%"})
         ws.set_column("A:A", 55)
         ws.set_column("B:B", 18)
         ws.set_column("C:C", 12)
-        ws.set_column("D:D", 12)
+        ws.set_column("D:D", 12, pct_fmt)  # porcentaje
         ws.set_column("E:E", 12)
-        ws.set_column("F:F", 12)
+        ws.set_column("F:F", 12, pct_fmt)  # pct_acum
 
+        # Título
+        ws.write(0, 7, titulo if titulo.strip() else "PARETO – Frecuencia y % acumulado")
+
+        # Total
         total = int(df_par["frecuencia"].sum())
         ws.write(n+2, 1, "TOTAL:")
         ws.write(n+2, 2, total)
 
+        # Gráfico columnas + línea
         chart = wb.add_chart({"type": "column"})
-        chart.add_series({"name": "Frecuencia", "categories": cats, "values": vals})
+        # Colores por punto (naranja para 80%, celeste para 20%)
+        points = [{"fill": {"color": (ORANGE if df_par.iloc[i]["segmento"] == "80%" else SKY)}} for i in range(n)]
+        chart.add_series({
+            "name": "Frecuencia",
+            "categories": cats,
+            "values": vals,
+            "points": points,
+        })
+
         line = wb.add_chart({"type": "line"})
-        line.add_series({"name": "% acumulado", "categories": cats, "values": pcts, "y2_axis": True, "marker": {"type": "circle"}})
+        line.add_series({
+            "name": "% acumulado",
+            "categories": cats,
+            "values": pcts,
+            "y2_axis": True,
+            "marker": {"type": "circle"},
+        })
+
         chart.combine(line)
         chart.set_y_axis({"name": "Frecuencia"})
-        chart.set_y2_axis({"name": "% acumulado", "min": 0, "max": 110, "major_unit": 10})
+        chart.set_y2_axis({"name": "% acumulado", "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
         chart.set_title({"name": titulo if titulo.strip() else "PARETO – Frecuencia y % acumulado"})
         chart.set_legend({"position": "bottom"})
         chart.set_size({"width": 1180, "height": 420})
         ws.insert_chart("H2", chart)
 
-        # Sombreado naranja solo filas con pct_acum ≤ 80.00
+        # Sombreado naranja a filas del 80% (≤ 80.00)
         try:
-            # Encuentra última fila que cumple ≤80.00
-            idxs = np.where(df_par["pct_acum"].to_numpy() <= 80.00)[0]
+            idxs = np.where(df_par["segmento"].to_numpy() == "80%")[0]
             if len(idxs) > 0:
                 last = int(idxs.max())
                 orange_fmt = wb.add_format({"bg_color": ORANGE, "font_color": "#000000"})
-                ws.conditional_format(1, 0, 1 + last, 5, {"type": "no_blanks", "format": orange_fmt})
+                ws.conditional_format(1, 0, 1 + last, 6, {"type": "no_blanks", "format": orange_fmt})
         except Exception:
             pass
 
     return output.getvalue()
 
 # =========================
-# 3) Estado y UI
+# 3) Estado (persistencia) y UI
 # =========================
-# Persistencia de frecuencias por descriptor en la sesión:
 if "freq_map" not in st.session_state:
     st.session_state.freq_map = {}  # {descriptor: frecuencia}
 
 st.title("Pareto de Descriptores")
-st.caption("Selecciona descriptores, asigna frecuencias y exporta. Regla 80/20: marcado hasta 80.00% (no incluye 80.01%).")
+st.caption("Marcado 80/20: se colorea únicamente hasta 80.00% (80.01% ya no).")
 
-# Título editable del gráfico/Excel
 titulo = st.text_input("Título del Pareto (opcional)", value="Pareto Comunidad")
 
-# Selector múltiple (no resetea frecuencias ya capturadas)
 cat_df = pd.DataFrame(CATALOGO).sort_values(["categoria", "descriptor"]).reset_index(drop=True)
 opciones = cat_df["descriptor"].tolist()
 seleccion = st.multiselect("1) Escoge uno o varios descriptores", options=opciones, default=[])
 
 st.subheader("2) Asigna la frecuencia")
 if seleccion:
-    # Construye dataframe de edición fusionando con lo ya guardado
     base = cat_df[cat_df["descriptor"].isin(seleccion)].copy()
-    # Coloca la frecuencia previamente capturada si existe
     base["frecuencia"] = [st.session_state.freq_map.get(d, 0) for d in base["descriptor"]]
 
     edit = st.data_editor(
@@ -334,11 +349,10 @@ if seleccion:
         },
     )
 
-    # Actualiza el mapa persistente con lo que el usuario edite
+    # Persistir cambios
     for _, row in edit.iterrows():
         st.session_state.freq_map[row["descriptor"]] = int(row["frecuencia"])
 
-    # Arma el dataframe completo para Pareto (solo seleccionados con su frecuencia vigente)
     df_in = edit[["descriptor", "categoria"]].copy()
     df_in["frecuencia"] = df_in["descriptor"].map(st.session_state.freq_map).fillna(0).astype(int)
 
@@ -351,11 +365,11 @@ if seleccion:
         if tabla.empty:
             st.info("Ingresa frecuencias (>0) para ver la tabla.")
         else:
-            st.dataframe(
-                tabla,
-                use_container_width=True,
-                hide_index=True
-            )
+            # Mostrar % con 2 decimales y columna segmento 80%/20%
+            mostrar = tabla.copy()
+            mostrar["porcentaje"] = mostrar["porcentaje"].map(lambda x: f"{x:.2f}%")
+            mostrar["pct_acum"]   = mostrar["pct_acum"].map(lambda x: f"{x:.2f}%")
+            st.dataframe(mostrar, use_container_width=True, hide_index=True)
 
     with c2:
         st.markdown("**Gráfico de Pareto**")
@@ -376,7 +390,6 @@ if seleccion:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 else:
-    st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias ya ingresadas se conservarán si más tarde agregas más descriptores.")
-
+    st.info("Selecciona al menos un descriptor para continuar. Las frecuencias ya ingresadas se conservarán si luego agregas más descriptores.")
 
 
