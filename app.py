@@ -1,24 +1,15 @@
-# app.py — Generador de Pareto (Delitos, Riesgos Sociales y Otros Factores)
+# app.py — Pareto AUTOMÁTICO (solo subir matriz)
 # ─────────────────────────────────────────────────────────────────────────────
-# ✅ Hecho para tus matrices grandes (115+ columnas, 500–600 filas)
-# ✅ Lee la matriz .XLSX tal cual
-# ✅ Detecta encabezados AMARILLOS (rango AI–ET por defecto, configurable)
-# ✅ (NUEVO) Filtro por CATEGORÍAS con 3 preseleccionadas: "Delitos",
-#    "Riesgos sociales", "Otros factores" usando un catálogo de descriptores
-#    opcional (archivo "DESCRIPTORES ACTUALIZADOS 2024 v2.xlsx").
-# ✅ Cuenta TODAS las menciones (no vacío, ≠ 0) — sin omitir filas
-# ✅ Calcula % y % acumulado (el acumulado cierra en el total)
-# ✅ Pareto: barras + línea acumulada + línea 80% y corte vertical
-# ✅ Descargas: PNG y Excel (tabla + gráfico embebido)
+# ✔ Sube TU matriz (.xlsx) y listo → se genera el Pareto automáticamente.
+# ✔ No requiere catálogo ni selección manual.
+# ✔ Lee la hoja ACTIVA, encabezado en fila 1.
+# ✔ Toma las columnas de encabezado AMARILLO en el rango AI–ET (config interno).
+# ✔ Si no detecta amarillos, usa TODOS los encabezados NO vacíos del rango AI–ET.
+# ✔ Cuenta TODAS las menciones (no vacío y ≠ 0) por descriptor (encabezado).
+# ✔ Calcula % y % acumulado (cierra en el total) y grafica barras + línea 80%.
+# ✔ Descargas: PNG y Excel (tabla + gráfico pegado).
 #
-# Requisitos (requirements.txt):
-#   streamlit
-#   pandas
-#   numpy
-#   openpyxl
-#   matplotlib
-#
-# Ejecuta:  streamlit run app.py
+# Requisitos: streamlit, pandas, numpy, openpyxl, matplotlib
 
 from __future__ import annotations
 from io import BytesIO
@@ -34,9 +25,14 @@ from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.drawing.image import Image as XLImage
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Parámetros
+# Parámetros fijos que pediste
 # ─────────────────────────────────────────────────────────────────────────────
-CATEGORIAS_OBJETIVO = ["Delitos", "Riesgos sociales", "Otros factores"]
+RANGO_DESDE = "AI"   # letras Excel
+RANGO_HASTA = "ET"
+HEADER_ROW = 1       # encabezados en fila 1
+TITULO_COMUNIDAD_DEF = "DESAMPARADOS NORTE"  # puedes cambiarlo en el panel
+
+# Colores amarillos comunes en Excel
 YELLOW_HEXES = {"FFFF00", "FFEB9C", "FFF2CC", "FFE699", "FFD966", "FFF4CC"}
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,122 +45,68 @@ def _strip(x):
     return str(x).strip()
 
 
-def detectar_columnas_amarillas(
-    xlsx_file: BytesIO,
-    sheet_name: Optional[str],
-    header_row: int = 1,
-    limit_from_col: Optional[str] = None,
-    limit_to_col: Optional[str] = None,
-) -> List[str]:
-    """Regresa los encabezados pintados de AMARILLO en la fila header_row.
-    Si se indican columnas Desde/Hasta (letras Excel), se limita a ese rango.
-    """
+def hoja_activa_nombre(xlsx_file: BytesIO) -> str:
+    xlsx_file.seek(0)
+    wb = load_workbook(filename=xlsx_file, data_only=True)
+    return wb.active.title
+
+
+def leer_df_hoja(xlsx_file: BytesIO, sheet_name: Optional[str]) -> pd.DataFrame:
+    """Lee una ÚNICA hoja como DataFrame (evita dict)."""
+    xlsx_file.seek(0)
+    hoja = sheet_name or hoja_activa_nombre(xlsx_file)
+    xlsx_file.seek(0)
+    df = pd.read_excel(xlsx_file, sheet_name=hoja, header=HEADER_ROW - 1, engine="openpyxl")
+    df = df.dropna(how="all").reset_index(drop=True)
+    return df
+
+
+def headers_en_rango(xlsx_file: BytesIO, sheet_name: Optional[str], desde: str, hasta: str) -> List[str]:
+    """Devuelve TODOS los encabezados no vacíos encontrados en el rango (por posición)."""
     xlsx_file.seek(0)
     wb = load_workbook(filename=xlsx_file, data_only=True)
     ws = wb[sheet_name] if sheet_name else wb.active
+    idx_from = column_index_from_string(desde)
+    idx_to = column_index_from_string(hasta)
+    out = []
+    for c in range(idx_from, idx_to + 1):
+        v = ws.cell(row=HEADER_ROW, column=c).value
+        if v is not None and str(v).strip() != "":
+            out.append(str(v))
+    return out
 
-    start_col_idx = 1
-    end_col_idx = ws.max_column
-    if limit_from_col and limit_to_col:
-        start_col_idx = column_index_from_string(limit_from_col)
-        end_col_idx = column_index_from_string(limit_to_col)
 
-    headers = []
-    for col_idx in range(start_col_idx, end_col_idx + 1):
-        cell = ws.cell(row=header_row, column=col_idx)
-        is_yellow = False
+def headers_amarillos_en_rango(xlsx_file: BytesIO, sheet_name: Optional[str], desde: str, hasta: str) -> List[str]:
+    xlsx_file.seek(0)
+    wb = load_workbook(filename=xlsx_file, data_only=True)
+    ws = wb[sheet_name] if sheet_name else wb.active
+    idx_from = column_index_from_string(desde)
+    idx_to = column_index_from_string(hasta)
+    amarillos = []
+    for c in range(idx_from, idx_to + 1):
+        cell = ws.cell(row=HEADER_ROW, column=c)
         fill = cell.fill
+        is_yellow = False
         if fill and getattr(fill, "patternType", None):
             fg = getattr(fill, "fgColor", None)
             rgb = getattr(fg, "rgb", None) if fg is not None else None
             if rgb:
                 rgb = rgb.upper().replace("#", "")
-                if len(rgb) == 8:
-                    rgb = rgb[2:]  # ARGB → RGB
+                if len(rgb) == 8:  # ARGB
+                    rgb = rgb[2:]
                 if rgb in YELLOW_HEXES:
                     is_yellow = True
         if is_yellow:
-            header_text = str(cell.value) if cell.value is not None else get_column_letter(col_idx)
+            header_text = str(cell.value) if cell.value is not None else get_column_letter(c)
             if _strip(header_text):
-                headers.append(header_text)
-    return headers
-
-
-def cargar_dataframe(xlsx_file: BytesIO, sheet_name: Optional[str], header_row: int) -> pd.DataFrame:
-    """Carga una hoja única como DataFrame.
-    Si sheet_name es None, toma la **hoja activa** (no devuelve dict).
-    """
-    # Averigua el nombre de la hoja activa cuando no se especifica
-    xlsx_file.seek(0)
-    wb = load_workbook(filename=xlsx_file, data_only=True)
-    ws = wb[sheet_name] if sheet_name else wb.active
-    hoja_efectiva = ws.title
-
-    # Lee solo esa hoja con pandas (evita que pandas devuelva un dict)
-    xlsx_file.seek(0)
-    df = pd.read_excel(
-        xlsx_file,
-        sheet_name=hoja_efectiva,
-        header=header_row - 1,
-        engine="openpyxl",
-    )
-    df = df.dropna(how="all").reset_index(drop=True)
-    return df
-
-
-def leer_catalogo_descriptores(
-    catalogo_file: BytesIO,
-    nombre_hoja: Optional[str],
-    col_desc: str,
-    col_cat: str,
-) -> pd.DataFrame:
-    """Lee el catálogo con al menos columnas: DESCRIPTOR y CATEGORIA.
-    Devuelve un DF normalizado con esas dos columnas (str.strip()).
-    """
-    catalogo_file.seek(0)
-    dfc = pd.read_excel(catalogo_file, sheet_name=nombre_hoja, engine="openpyxl")
-    # Normaliza nombres
-    cols = {c: c.strip().upper() for c in dfc.columns}
-    dfc.columns = [cols[c] for c in dfc.columns]
-    cdesc = col_desc.strip().upper()
-    ccat = col_cat.strip().upper()
-    if cdesc not in dfc.columns or ccat not in dfc.columns:
-        raise ValueError(
-            f"El catálogo debe tener columnas '{col_desc}' y '{col_cat}'. Encontradas: {list(dfc.columns)}"
-        )
-    out = dfc[[cdesc, ccat]].copy()
-    out.columns = ["DESCRIPTOR", "CATEGORIA"]
-    out["DESCRIPTOR"] = out["DESCRIPTOR"].astype(str).str.strip()
-    out["CATEGORIA"] = out["CATEGORIA"].astype(str).str.strip()
-    out = out.dropna(how="any")
-    return out
-
-
-def filtrar_por_categorias(
-    headers: List[str],
-    catalogo_df: Optional[pd.DataFrame],
-    categorias_seleccionadas: List[str],
-) -> List[str]:
-    """Filtra una lista de headers usando un catálogo (DESCRIPTOR→CATEGORIA).
-    Si no hay catálogo, regresa headers tal cual.
-    """
-    if catalogo_df is None or catalogo_df.empty:
-        return headers
-    mapa = {r.DESCRIPTOR: r.CATEGORIA for r in catalogo_df.itertuples(index=False)}
-    keep = []
-    cats = set([_strip(x).lower() for x in categorias_seleccionadas])
-    for h in headers:
-        cat = mapa.get(h)
-        if cat and _strip(cat).lower() in cats:
-            keep.append(h)
-    return keep
+                amarillos.append(header_text)
+    return amarillos
 
 
 def contar_frecuencias(df: pd.DataFrame, columnas: List[str]) -> pd.DataFrame:
-    """Cuenta menciones (no vacío y ≠ 0) por columna/descriptor."""
-    cols_ok = [c for c in columnas if c in df.columns]
+    cols = [c for c in columnas if c in df.columns]
     freqs = []
-    for c in cols_ok:
+    for c in cols:
         s = df[c]
         mask = ~s.isna()
         mask &= s.astype(str).str.strip().ne("")
@@ -199,7 +141,6 @@ def graficar_pareto(df_pareto: pd.DataFrame, titulo: str) -> plt.Figure:
         ax.text(0.5, 0.5, "Sin datos", ha="center", va="center", fontsize=16)
         ax.axis("off")
         return fig
-
     x = np.arange(len(df_pareto))
     frec = df_pareto["frecuencia"].values
     acum_pct = df_pareto["acumul%"].values
@@ -232,22 +173,11 @@ def graficar_pareto(df_pareto: pd.DataFrame, titulo: str) -> plt.Figure:
     return fig
 
 
-def formatear_para_mostrar(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    out = df.copy()
-    out["%"] = out["%"].map(lambda v: f"{v:,.2f}%")
-    out["acumul%"] = out["acumul%"].map(lambda v: f"{v:,.2f}%")
-    out["dentro_80"] = out["dentro_80"].map(lambda b: "Sí" if bool(b) else "No")
-    return out
-
-
 def exportar_excel_con_grafico(df_pareto: pd.DataFrame, fig: plt.Figure, hoja="PARETO") -> BytesIO:
     bio = BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         df_pareto.to_excel(writer, sheet_name=hoja, index=False)
-        wb = writer.book
-        ws = wb[hoja]
+        wb = writer.book; ws = wb[hoja]
         img_io = BytesIO()
         fig.savefig(img_io, format="png", dpi=220, bbox_inches="tight")
         img_io.seek(0)
@@ -258,142 +188,70 @@ def exportar_excel_con_grafico(df_pareto: pd.DataFrame, fig: plt.Figure, hoja="P
     return bio
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UI — Streamlit
+# UI
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Generador de Pareto – Comunidad", layout="wide")
 st.title("Generador de Pareto – Comunidad")
 
-with st.sidebar:
-    st.header("⚙️ Configuración")
-    comunidad = st.text_input("Nombre de la comunidad (para el título)", value="DESAMPARADOS NORTE")
-    archivo = st.file_uploader("Matriz (.xlsx)", type=["xlsx"])
-    hoja = st.text_input("Hoja (vacío = activa)", value="")
-    header_row = st.number_input("Fila del encabezado", 1, 999, 1)
+comunidad = st.text_input("Nombre de la comunidad (título)", value=TITULO_COMUNIDAD_DEF)
+archivo = st.file_uploader("Sube la MATRIZ (.xlsx) — solo esto", type=["xlsx"])
 
-    st.markdown("**Rango de columnas (letras Excel)**")
-    c1, c2 = st.columns(2)
-    with c1:
-        from_col = st.text_input("Desde", value="AI")
-    with c2:
-        to_col = st.text_input("Hasta", value="ET")
-    usar_rango = st.checkbox("Limitar a este rango", value=True)
-    detectar_amarillas = st.checkbox("Detectar encabezados AMARILLOS", value=True)
-
-    st.divider()
-    st.subheader("Catálogo de descriptores (opcional)")
-    st.caption("Para filtrar por categorías exactas: usa tu archivo 'DESCRIPTORES ACTUALIZADOS 2024 v2.xlsx'")
-    catalogo = st.file_uploader("Catálogo .xlsx", type=["xlsx"], help="Debe incluir columnas DESCRIPTOR y CATEGORIA (o cambia nombres abajo)")
-    hoja_catalogo = st.text_input("Hoja del catálogo (opcional)", value="")
-    col_desc = st.text_input("Columna descriptor", value="DESCRIPTOR")
-    col_cat = st.text_input("Columna categoría", value="CATEGORIA")
-    cats = st.multiselect("Categorías a incluir", options=CATEGORIAS_OBJETIVO + ["(todas)"] , default=CATEGORIAS_OBJETIVO)
-    incluir_categorias = st.checkbox("Forzar SOLO categorías seleccionadas (si hay catálogo)", value=True)
-
-    procesar = st.button("Procesar Pareto", type="primary")
-
-if not archivo or not procesar:
-    st.info("Sube tu matriz, deja AI–ET y AMARILLOS activos, y pulsa **Procesar Pareto**. Si agregas catálogo, se filtrarán solo **Delitos / Riesgos sociales / Otros factores** por defecto.")
+if not archivo:
+    st.info("Sube tu matriz y el Pareto se genera automáticamente con los encabezados AMARILLOS del rango AI–ET.")
     st.stop()
 
-sheetname = hoja.strip() or None
-rango_desde = from_col.strip().upper() if (usar_rango and from_col.strip()) else None
-rango_hasta = to_col.strip().upper() if (usar_rango and to_col.strip()) else None
-
-# 1) Detectar amarillas (pre-selección)
+# 1) Leer DF único
 try:
-    pre_cols = detectar_columnas_amarillas(
-        archivo, sheetname, header_row=header_row,
-        limit_from_col=rango_desde, limit_to_col=rango_hasta,
-    ) if detectar_amarillas else []
+    df = leer_df_hoja(archivo, sheet_name=None)
 except Exception as e:
-    st.error(f"Error detectando encabezados amarillos: {e}")
-    pre_cols = []
-
-# 2) Cargar la matriz completa
-try:
-    df = cargar_dataframe(archivo, sheetname, header_row)
-except Exception as e:
-    st.error(f"No se pudo leer el Excel: {e}")
+    st.error(f"No se pudo leer la matriz: {e}")
     st.stop()
 
-# 3) Encabezados candidatos según rango
-if usar_rango and rango_desde and rango_hasta:
+# 2) Encabezados
+amarillos = []
+try:
+    amarillos = headers_amarillos_en_rango(archivo, sheet_name=None, desde=RANGO_DESDE, hasta=RANGO_HASTA)
+except Exception:
+    amarillos = []
+
+if not amarillos:
+    # Fallback: todos los encabezados no vacíos del rango
     try:
-        archivo.seek(0)
-        wb = load_workbook(filename=archivo, data_only=True)
-        ws = wb[sheetname] if sheetname else wb.active
-        idx_from = column_index_from_string(rango_desde)
-        idx_to = column_index_from_string(rango_hasta)
-        headers_rango = []
-        for col_idx in range(idx_from, idx_to + 1):
-            v = ws.cell(row=header_row, column=col_idx).value
-            if v is not None and str(v).strip() != "":
-                headers_rango.append(str(v))
-        candidatos = [h for h in headers_rango if h in df.columns]
+        amarillos = headers_en_rango(archivo, sheet_name=None, desde=RANGO_DESDE, hasta=RANGO_HASTA)
     except Exception:
-        candidatos = list(df.columns)
-else:
-    candidatos = list(df.columns)
+        st.error("No se pudieron determinar los encabezados en el rango AI–ET.")
+        st.stop()
 
-# 4) Leer catálogo (si hay) y filtrar por categorías objetivo (pre-cargado)
-catalogo_df = None
-if catalogo is not None:
-    try:
-        catalogo_df = leer_catalogo_descriptores(catalogo, hoja_catalogo or None, col_desc, col_cat)
-    except Exception as e:
-        st.warning(f"No se pudo leer el catálogo: {e}")
-
-if incluir_categorias and catalogo_df is not None:
-    categorias_elegidas = [c for c in cats if c != "(todas)"] or CATEGORIAS_OBJETIVO
-    candidatos = filtrar_por_categorias(candidatos, catalogo_df, categorias_elegidas)
-    pre_cols = filtrar_por_categorias(pre_cols, catalogo_df, categorias_elegidas)
-
-# 5) Selector manual (con preselección)
-st.subheader("Columnas a considerar (Delitos / Riesgos sociales / Otros factores)")
-seleccion = st.multiselect(
-    "Encabezados a contar",
-    options=candidatos,
-    default=(pre_cols if pre_cols else candidatos),
-)
-if not seleccion:
-    st.warning("Debes seleccionar al menos una columna.")
-    st.stop()
-
-# 6) Conteo y Pareto
-freqs = contar_frecuencias(df, seleccion)
+# 3) Conteo y Pareto
+freqs = contar_frecuencias(df, amarillos)
 if freqs.empty:
-    st.warning("No hay menciones en las columnas seleccionadas.")
+    st.warning("No se encontraron menciones en las columnas del rango AI–ET (con/sin amarillo).")
     st.stop()
 
 df_pareto, total = construir_pareto(freqs)
 
-# 7) KPIs
-st.markdown(
-    f"**Filas:** {len(df)}  •  **Columnas:** {len(seleccion)}  •  **Total (Σ frecuencia):** {total}"
-)
+# 4) KPIs
+st.markdown(f"**Filas:** {len(df)} • **Columnas (detectadas):** {len(amarillos)} • **Total (Σ frecuencia):** {total}")
 
-# 8) Tabla
-st.subheader("Tabla del Pareto")
-st.dataframe(formatear_para_mostrar(df_pareto), use_container_width=True)
+# 5) Tabla y gráfico
+st.subheader("Tabla de Pareto")
+out = df_pareto.copy()
+out["%"] = out["%"].map(lambda v: f"{v:,.2f}%")
+out["acumul%"] = out["acumul%"].map(lambda v: f"{v:,.2f}%")
+out["dentro_80"] = out["dentro_80"].map(lambda b: "Sí" if bool(b) else "No")
+st.dataframe(out, use_container_width=True)
 
-# 9) Gráfico
-titulo = f"PARETO COMUNIDAD {(_strip(comunidad).upper() or 'SIN NOMBRE')}"
-fig = graficar_pareto(df_pareto, titulo)
+fig = graficar_pareto(df_pareto, f"PARETO COMUNIDAD {(_strip(comunidad).upper() or 'SIN NOMBRE')}")
 st.pyplot(fig, use_container_width=True)
 
-# 10) Descargas
+# 6) Descargas
 c1, c2 = st.columns(2)
 with c1:
-    png_io = BytesIO()
-    fig.savefig(png_io, format="png", dpi=220, bbox_inches="tight")
-    png_io.seek(0)
-    st.download_button("⬇️ PNG del gráfico", data=png_io, file_name=f"pareto_{_strip(comunidad).replace(' ', '_').lower()}.png", mime="image/png")
+    buf = BytesIO(); fig.savefig(buf, format="png", dpi=220, bbox_inches="tight"); buf.seek(0)
+    st.download_button("⬇️ PNG del gráfico", data=buf, file_name=f"pareto_{_strip(comunidad).replace(' ', '_').lower()}.png", mime="image/png")
 with c2:
     xio = exportar_excel_con_grafico(df_pareto, fig, hoja="PARETO")
     st.download_button("⬇️ Excel (tabla + gráfico)", data=xio, file_name=f"pareto_{_strip(comunidad).replace(' ', '_').lower()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-
-
 
 
