@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 
 # ============================================================================
-# 1) CATÁLOGO EMBEBIDO (normalizado; puedes editar/añadir aquí si hiciera falta)
+# 1) CATÁLOGO EMBEBIDO (normalizado; edita aquí si deseas agregar/quitar)
 # ============================================================================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
@@ -246,7 +246,7 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     st.pyplot(fig)
 
 def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
-    """XLSX con columnas ordenadas y gráfico con colores por 'segmento_real'."""
+    """XLSX con columnas ordenadas, sombreado 80% real, barras por punto y TOTAL."""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         hoja = "Pareto"
@@ -265,7 +265,8 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         ws = writer.sheets[hoja]
 
         # Formatos
-        pct_fmt = wb.add_format({"num_format": "0.00%"})
+        pct_fmt   = wb.add_format({"num_format": "0.00%"})
+        total_fmt = wb.add_format({"bold": True})
         ws.set_column("A:A", 18)   # categoría
         ws.set_column("B:B", 55)   # descriptor
         ws.set_column("C:C", 12)   # frecuencia
@@ -279,6 +280,21 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         cats = f"=Pareto!$B$2:$B${n+1}"
         vals = f"=Pareto!$C$2:$C${n+1}"
         pcts = f"=Pareto!$E$2:$E${n+1}"
+
+        # TOTAL (restaurado)
+        total = int(df_par["frecuencia"].sum())
+        ws.write(n + 2, 1, "TOTAL:", total_fmt)
+        ws.write(n + 2, 2, total, total_fmt)
+
+        # Sombreado de filas hasta 80% real (A:G)
+        try:
+            idxs = np.where(df_par["segmento_real"].to_numpy() == "80%")[0]
+            if len(idxs) > 0:
+                last = int(idxs.max())
+                orange_bg = wb.add_format({"bg_color": ORANGE, "font_color": "#000000"})
+                ws.conditional_format(1, 0, 1 + last, 6, {"type": "no_blanks", "format": orange_bg})
+        except Exception:
+            pass
 
         # Gráfico: barras coloreadas por 'segmento_real'
         chart = wb.add_chart({"type": "column"})
