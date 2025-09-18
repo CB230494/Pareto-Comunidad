@@ -91,8 +91,23 @@ def detectar_columnas_amarillas(
 
 
 def cargar_dataframe(xlsx_file: BytesIO, sheet_name: Optional[str], header_row: int) -> pd.DataFrame:
+    """Carga una hoja única como DataFrame.
+    Si sheet_name es None, toma la **hoja activa** (no devuelve dict).
+    """
+    # Averigua el nombre de la hoja activa cuando no se especifica
     xlsx_file.seek(0)
-    df = pd.read_excel(xlsx_file, sheet_name=sheet_name, header=header_row - 1, engine="openpyxl")
+    wb = load_workbook(filename=xlsx_file, data_only=True)
+    ws = wb[sheet_name] if sheet_name else wb.active
+    hoja_efectiva = ws.title
+
+    # Lee solo esa hoja con pandas (evita que pandas devuelva un dict)
+    xlsx_file.seek(0)
+    df = pd.read_excel(
+        xlsx_file,
+        sheet_name=hoja_efectiva,
+        header=header_row - 1,
+        engine="openpyxl",
+    )
     df = df.dropna(how="all").reset_index(drop=True)
     return df
 
@@ -377,7 +392,6 @@ with c1:
 with c2:
     xio = exportar_excel_con_grafico(df_pareto, fig, hoja="PARETO")
     st.download_button("⬇️ Excel (tabla + gráfico)", data=xio, file_name=f"pareto_{_strip(comunidad).replace(' ', '_').lower()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
 
 
 
