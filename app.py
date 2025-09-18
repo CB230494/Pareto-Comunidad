@@ -1,474 +1,353 @@
-# app.py — Pareto Comunidad (DELITO / RIESGO SOCIAL / OTROS FACTORES)
-# Muestra porcentajes en pantalla como "4,66%" y exporta Excel con gráfico Pareto.
+# app.py — Pareto con catálogo embebido (normalizado)
+# ---------------------------------------------------
+# - Selección múltiple de descriptores
+# - Edición de frecuencias
+# - Tabla y gráfico de Pareto
+# - Exportar a Excel (con gráfico incrustado) y CSV
+# ---------------------------------------------------
 
-import re
-import unicodedata
-from io import BytesIO
-from typing import Dict, List, Optional, Tuple
+import io
+from typing import List, Dict
 
 import numpy as np
 import pandas as pd
 import streamlit as st
-from difflib import get_close_matches
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide", initial_sidebar_state="collapsed")
-TOP_N_GRAFICO = 60
+st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 
-# ===================== CATEGORÍAS PERMITIDAS =====================
-CATEGORIAS_VALIDAS = {"DELITO", "RIESGO SOCIAL", "OTROS FACTORES"}
 
-def _force_cat(x: str) -> str:
-    n = (x or "").strip().upper()
-    if n in CATEGORIAS_VALIDAS:
-        return n
-    return "OTROS FACTORES"
+# =====================================================================
+# 1) CATÁLOGO EMBEBIDO (normalizado: mayúsculas/minúsculas “correctas”)
+# =====================================================================
+CATALOGO: List[Dict[str, str]] = [
+    {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
+    {"categoria": "Delito", "descriptor": "Abigeato (robo y destace de ganado)"},
+    {"categoria": "Delito", "descriptor": "Aborto"},
+    {"categoria": "Delito", "descriptor": "Abuso de autoridad"},
+    {"categoria": "Riesgo social", "descriptor": "Accidentes de tránsito"},
+    {"categoria": "Delito", "descriptor": "Accionamiento de arma de fuego (balaceras)"},
+    {"categoria": "Riesgo social", "descriptor": "Acoso escolar (bullying)"},
+    {"categoria": "Riesgo social", "descriptor": "Acoso laboral (mobbing)"},
+    {"categoria": "Riesgo social", "descriptor": "Acoso sexual callejero"},
+    {"categoria": "Riesgo social", "descriptor": "Actos obscenos en vía pública"},
+    {"categoria": "Delito", "descriptor": "Administración fraudulenta, apropiaciones indebidas o enriquecimiento ilícito"},
+    {"categoria": "Delito", "descriptor": "Agresión con armas"},
+    {"categoria": "Riesgo social", "descriptor": "Agrupaciones delincuenciales no organizadas"},
+    {"categoria": "Delito", "descriptor": "Alteración de datos y sabotaje informático"},
+    {"categoria": "Otros factores", "descriptor": "Ambiente laboral inadecuado"},
+    {"categoria": "Delito", "descriptor": "Amenazas"},
+    {"categoria": "Riesgo social", "descriptor": "Analfabetismo"},
+    {"categoria": "Riesgo social", "descriptor": "Bajos salarios"},
+    {"categoria": "Riesgo social", "descriptor": "Barras de fútbol"},
+    {"categoria": "Riesgo social", "descriptor": "Búnker (eje de expendio de drogas)"},
+    {"categoria": "Delito", "descriptor": "Calumnia"},
+    {"categoria": "Delito", "descriptor": "Caza ilegal"},
+    {"categoria": "Delito", "descriptor": "Conducción temeraria"},
+    {"categoria": "Riesgo social", "descriptor": "Consumo de alcohol en vía pública"},
+    {"categoria": "Riesgo social", "descriptor": "Consumo de drogas"},
+    {"categoria": "Riesgo social", "descriptor": "Contaminación sónica"},
+    {"categoria": "Delito", "descriptor": "Contrabando"},
+    {"categoria": "Delito", "descriptor": "Corrupción"},
+    {"categoria": "Delito", "descriptor": "Corrupción policial"},
+    {"categoria": "Delito", "descriptor": "Cultivo de droga (marihuana)"},
+    {"categoria": "Delito", "descriptor": "Daño ambiental"},
+    {"categoria": "Delito", "descriptor": "Daños/vandalismo"},
+    {"categoria": "Riesgo social", "descriptor": "Deficiencia en la infraestructura vial"},
+    {"categoria": "Otros factores", "descriptor": "Deficiencia en la línea 9-1-1"},
+    {"categoria": "Riesgo social", "descriptor": "Deficiencias en el alumbrado público"},
+    {"categoria": "Delito", "descriptor": "Delincuencia organizada"},
+    {"categoria": "Delito", "descriptor": "Delitos contra el ámbito de intimidad (violación de secretos, correspondencia y comunicaciones electrónicas)"},
+    {"categoria": "Delito", "descriptor": "Delitos sexuales"},
+    {"categoria": "Riesgo social", "descriptor": "Desaparición de personas"},
+    {"categoria": "Riesgo social", "descriptor": "Desarticulación interinstitucional"},
+    {"categoria": "Riesgo social", "descriptor": "Desempleo"},
+    {"categoria": "Riesgo social", "descriptor": "Desvinculación estudiantil"},
+    {"categoria": "Delito", "descriptor": "Desobediencia"},
+    {"categoria": "Delito", "descriptor": "Desórdenes en vía pública"},
+    {"categoria": "Delito", "descriptor": "Disturbios (riñas)"},
+    {"categoria": "Riesgo social", "descriptor": "Enfrentamientos estudiantiles"},
+    {"categoria": "Delito", "descriptor": "Estafa o defraudación"},
+    {"categoria": "Delito", "descriptor": "Estupro (delitos sexuales contra menor de edad)"},
+    {"categoria": "Delito", "descriptor": "Evasión y quebrantamiento de pena"},
+    {"categoria": "Delito", "descriptor": "Explosivos"},
+    {"categoria": "Delito", "descriptor": "Extorsión"},
+    {"categoria": "Delito", "descriptor": "Fabricación, producción o reproducción de pornografía"},
+    {"categoria": "Riesgo social", "descriptor": "Facilismo económico"},
+    {"categoria": "Delito", "descriptor": "Falsificación de moneda y otros valores"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de cámaras de seguridad"},
+    {"categoria": "Otros factores", "descriptor": "Falta de capacitación policial"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de control a patentes"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de control fronterizo"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de corresponsabilidad en seguridad"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de cultura vial"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de cultura y compromiso ciudadano"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de educación familiar"},
+    {"categoria": "Otros factores", "descriptor": "Falta de incentivos"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de inversión social"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de legislación de extinción de dominio"},
+    {"categoria": "Otros factores", "descriptor": "Falta de personal administrativo"},
+    {"categoria": "Otros factores", "descriptor": "Falta de personal policial"},
+    {"categoria": "Otros factores", "descriptor": "Falta de policías de tránsito"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de políticas públicas en seguridad"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de presencia policial"},
+    {"categoria": "Riesgo social", "descriptor": "Falta de salubridad pública"},
+    {"categoria": "Riesgo social", "descriptor": "Familias disfuncionales"},
+    {"categoria": "Delito", "descriptor": "Fraude informático"},
+    {"categoria": "Delito", "descriptor": "Grooming"},
+    {"categoria": "Riesgo social", "descriptor": "Hacinamiento carcelario"},
+    {"categoria": "Riesgo social", "descriptor": "Hacinamiento policial"},
+    {"categoria": "Delito", "descriptor": "Homicidio"},
+    {"categoria": "Riesgo social", "descriptor": "Hospedajes ilegales (cuarterías)"},
+    {"categoria": "Delito", "descriptor": "Hurto"},
+    {"categoria": "Otros factores", "descriptor": "Inadecuado uso del recurso policial"},
+    {"categoria": "Riesgo social", "descriptor": "Incumplimiento al plan regulador de la municipalidad"},
+    {"categoria": "Delito", "descriptor": "Incumplimiento del deber alimentario"},
+    {"categoria": "Riesgo social", "descriptor": "Indiferencia social"},
+    {"categoria": "Otros factores", "descriptor": "Inefectividad en el servicio de policía"},
+    {"categoria": "Riesgo social", "descriptor": "Ineficiencia en la administración de justicia"},
+    {"categoria": "Otros factores", "descriptor": "Infraestructura inadecuada"},
+    {"categoria": "Riesgo social", "descriptor": "Intolerancia social"},
+    {"categoria": "Otros factores", "descriptor": "Irrespeto a la jefatura"},
+    {"categoria": "Otros factores", "descriptor": "Irrespeto al subalterno"},
+    {"categoria": "Otros factores", "descriptor": "Jornadas laborales extensas"},
+    {"categoria": "Delito", "descriptor": "Lavado de activos"},
+    {"categoria": "Delito", "descriptor": "Lesiones"},
+    {"categoria": "Delito", "descriptor": "Ley de armas y explosivos N° 7530"},
+    {"categoria": "Riesgo social", "descriptor": "Ley de control de tabaco (Ley 9028)"},
+    {"categoria": "Riesgo social", "descriptor": "Lotes baldíos"},
+    {"categoria": "Delito", "descriptor": "Maltrato animal"},
+    {"categoria": "Delito", "descriptor": "Narcotráfico"},
+    {"categoria": "Riesgo social", "descriptor": "Necesidades básicas insatisfechas"},
+    {"categoria": "Riesgo social", "descriptor": "Percepción de inseguridad"},
+    {"categoria": "Riesgo social", "descriptor": "Pérdida de espacios públicos"},
+    {"categoria": "Riesgo social", "descriptor": "Personas con exceso de tiempo de ocio"},
+    {"categoria": "Riesgo social", "descriptor": "Personas en estado migratorio irregular"},
+    {"categoria": "Riesgo social", "descriptor": "Personas en situación de calle"},
+    {"categoria": "Delito", "descriptor": "Menores en vulnerabilidad"},
+    {"categoria": "Delito", "descriptor": "Pesca ilegal"},
+    {"categoria": "Delito", "descriptor": "Portación ilegal de armas"},
+    {"categoria": "Riesgo social", "descriptor": "Presencia multicultural"},
+    {"categoria": "Otros factores", "descriptor": "Presión por resultados operativos"},
+    {"categoria": "Delito", "descriptor": "Privación de libertad sin ánimo de lucro"},
+    {"categoria": "Riesgo social", "descriptor": "Problemas vecinales"},
+    {"categoria": "Delito", "descriptor": "Receptación"},
+    {"categoria": "Delito", "descriptor": "Relaciones impropias"},
+    {"categoria": "Delito", "descriptor": "Resistencia (irrespeto a la autoridad)"},
+    {"categoria": "Delito", "descriptor": "Robo a comercio (intimidación)"},
+    {"categoria": "Delito", "descriptor": "Robo a comercio (tacha)"},
+    {"categoria": "Delito", "descriptor": "Robo a edificación (tacha)"},
+    {"categoria": "Delito", "descriptor": "Robo a personas"},
+    {"categoria": "Delito", "descriptor": "Robo a transporte comercial"},
+    {"categoria": "Delito", "descriptor": "Robo a vehículos (tacha)"},
+    {"categoria": "Delito", "descriptor": "Robo a vivienda (intimidación)"},
+    {"categoria": "Delito", "descriptor": "Robo a vivienda (tacha)"},
+    {"categoria": "Delito", "descriptor": "Robo de bicicleta"},
+    {"categoria": "Delito", "descriptor": "Robo de cultivos"},
+    {"categoria": "Delito", "descriptor": "Robo de motocicletas/vehículos (bajonazo)"},
+    {"categoria": "Delito", "descriptor": "Robo de vehículos"},
+    {"categoria": "Delito", "descriptor": "Secuestro"},
+    {"categoria": "Delito", "descriptor": "Simulación de delito"},
+    {"categoria": "Riesgo social", "descriptor": "Sistema jurídico desactualizado"},
+    {"categoria": "Riesgo social", "descriptor": "Suicidio"},
+    {"categoria": "Delito", "descriptor": "Sustracción de una persona menor de edad o incapaz"},
+    {"categoria": "Delito", "descriptor": "Tala ilegal"},
+    {"categoria": "Riesgo social", "descriptor": "Tendencia social hacia el delito (pautas de crianza violenta)"},
+    {"categoria": "Riesgo social", "descriptor": "Tenencia de droga"},
+    {"categoria": "Delito", "descriptor": "Tentativa de homicidio"},
+    {"categoria": "Delito", "descriptor": "Terrorismo"},
+    {"categoria": "Riesgo social", "descriptor": "Trabajo informal"},
+    {"categoria": "Delito", "descriptor": "Tráfico de armas"},
+    {"categoria": "Delito", "descriptor": "Tráfico de influencias"},
+    {"categoria": "Riesgo social", "descriptor": "Transporte informal (Uber, porteadores, piratas)"},
+    {"categoria": "Delito", "descriptor": "Trata de personas"},
+    {"categoria": "Delito", "descriptor": "Turbación de actos religiosos y profanaciones"},
+    {"categoria": "Delito", "descriptor": "Uso ilegal de uniformes, insignias o dispositivos policiales"},
+    {"categoria": "Delito", "descriptor": "Usurpación de terrenos (precarios)"},
+    {"categoria": "Delito", "descriptor": "Venta de drogas"},
+    {"categoria": "Riesgo social", "descriptor": "Ventas informales (ambulantes)"},
+    {"categoria": "Riesgo social", "descriptor": "Vigilancia informal"},
+    {"categoria": "Delito", "descriptor": "Violación de domicilio"},
+    {"categoria": "Delito", "descriptor": "Violación de la custodia de las cosas"},
+    {"categoria": "Delito", "descriptor": "Violación de sellos"},
+    {"categoria": "Delito", "descriptor": "Violencia de género"},
+    {"categoria": "Delito", "descriptor": "Violencia intrafamiliar"},
+    {"categoria": "Riesgo social", "descriptor": "Xenofobia"},
+    {"categoria": "Riesgo social", "descriptor": "Zonas de prostitución"},
+    {"categoria": "Riesgo social", "descriptor": "Zonas vulnerables"},
+    {"categoria": "Delito", "descriptor": "Robo a transporte público con intimidación"},
+    {"categoria": "Delito", "descriptor": "Robo de cable"},
+    {"categoria": "Delito", "descriptor": "Explotación sexual infantil"},
+    {"categoria": "Delito", "descriptor": "Explotación laboral infantil"},
+    {"categoria": "Delito", "descriptor": "Tráfico ilegal de personas"},
+    {"categoria": "Riesgo social", "descriptor": "Bares clandestinos"},
+    {"categoria": "Delito", "descriptor": "Robo de combustible"},
+    {"categoria": "Delito", "descriptor": "Femicidio"},
+    {"categoria": "Delito", "descriptor": "Delitos contra la vida (homicidios, heridos)"},
+    {"categoria": "Delito", "descriptor": "Venta y consumo de drogas en vía pública"},
+    {"categoria": "Delito", "descriptor": "Asalto (a personas, comercio, vivienda, transporte público)"},
+    {"categoria": "Delito", "descriptor": "Robo de ganado y agrícola"},
+    {"categoria": "Delito", "descriptor": "Robo de equipo agrícola"},
+]
 
-# ===================== Diccionario embebido (EDITABLE/AMPLIABLE) ======================
-# Formato: ["Descriptor correcto", "Categoría"]
-DICCIONARIO_EMBEBIDO = pd.DataFrame([
-    # -------- DELITO --------
-    ["Consumo de drogas", "DELITO"],
-    ["Venta de drogas", "DELITO"],
-    ["Bunker (Puntos de venta y consumo de drogas)", "DELITO"],
-    ["Hurto", "DELITO"],
-    ["Robo a personas", "DELITO"],
-    ["Robo a vivienda (Tacha)", "DELITO"],
-    ["Robo a vivienda (Intimidación)", "DELITO"],
-    ["Robo a vehículos (Tacha)", "DELITO"],
-    ["Robo a vehiculos", "DELITO"],
-    ["Robo a comercio (Intimidación)", "DELITO"],
-    ["Robo a comercio (Tacha)", "DELITO"],
-    ["Robo de vehículos", "DELITO"],
-    ["Receptación", "DELITO"],
-    ["Estafas o defraudación", "DELITO"],
-    ["Daños/Vandalismo", "DELITO"],
-    ["Lesiones", "DELITO"],
-    ["Portación ilegal de arma", "DELITO"],
-    ["Tentativa de homicidio", "DELITO"],
-    ["Homicidio", "DELITO"],
-    ["Abigeato", "DELITO"],
-    ["Acoso sexual callejero", "DELITO"],
-    ["Allanamiento de morada", "DELITO"],
-    ["Amenazas", "DELITO"],
-    ["Apropiación indebida", "DELITO"],
-    ["Asociación ilícita", "DELITO"],
-    ["Asesinato", "DELITO"],
-    ["Contrabando", "DELITO"],
-    ["Corrupción de funcionario", "DELITO"],
-    ["Daños culposos", "DELITO"],
-    ["Delitos informáticos", "DELITO"],
-    ["Encubrimiento", "DELITO"],
-    ["Estafa electrónica", "DELITO"],
-    ["Extorsión", "DELITO"],
-    ["Falsificación de documentos", "DELITO"],
-    ["Femicidio", "DELITO"],
-    ["Fraude", "DELITO"],
-    ["Quebrantamiento de medidas", "DELITO"],
-    ["Rapiña", "DELITO"],
-    ["Resistencia a la autoridad", "DELITO"],
-    ["Robo agravado", "DELITO"],
-    ["Sustracción de menores", "DELITO"],
-    ["Tráfico de armas", "DELITO"],
-    ["Violencia intrafamiliar", "DELITO"],
-    ["Violencia de género", "DELITO"],
+# =====================================================================
+# 2) CÁLCULO Y GRÁFICO DE PARETO
+# =====================================================================
+def calcular_pareto(df_in: pd.DataFrame) -> pd.DataFrame:
+    """Recibe columnas: descriptor, categoria, frecuencia."""
+    df = df_in.copy()
+    df["frecuencia"] = pd.to_numeric(df["frecuencia"], errors="coerce").fillna(0).astype(int)
+    df = df[df["frecuencia"] > 0]
+    if df.empty:
+        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0)
 
-    # ---- RIESGO SOCIAL ----
-    ["Falta de oportunidades laborales.", "RIESGO SOCIAL"],
-    ["Falta de inversion social", "RIESGO SOCIAL"],
-    ["Personas con exceso de tiempo de ocio", "RIESGO SOCIAL"],
-    ["Problemas Vecinales.", "RIESGO SOCIAL"],
-    ["Ausentismo escolar", "RIESGO SOCIAL"],
-    ["Niñez y adolescencia en riesgo", "RIESGO SOCIAL"],
-    ["Población migrante vulnerable", "RIESGO SOCIAL"],
-    ["Población indígena en riesgo", "RIESGO SOCIAL"],
-    ["Adultos mayores en abandono", "RIESGO SOCIAL"],
-    ["Familias disfuncionales", "RIESGO SOCIAL"],
-    ["Consumo problemático en jóvenes", "RIESGO SOCIAL"],
-    ["Violencia escolar", "RIESGO SOCIAL"],
+    df = df.sort_values("frecuencia", ascending=False)
+    total = int(df["frecuencia"].sum())
+    df["porcentaje"] = (df["frecuencia"] / total * 100).round(2)
+    df["acumulado"] = df["frecuencia"].cumsum()
+    df["pct_acum"] = (df["acumulado"] / total * 100).round(2)
+    return df.reset_index(drop=True)
 
-    # ---- OTROS FACTORES ----
-    ["Consumo de alcohol en vía pública", "OTROS FACTORES"],
-    ["Contaminacion Sonica", "OTROS FACTORES"],
-    ["Deficiencia en la infraestructura vial", "OTROS FACTORES"],
-    ["Lotes baldíos.", "OTROS FACTORES"],
-    ["Falta de salubridad publica", "OTROS FACTORES"],
-    ["Disturbios(Riñas)", "OTROS FACTORES"],
-    ["Personas en situación de calle.", "OTROS FACTORES"],
-    ["Mercado municipal desordenado", "OTROS FACTORES"],
-    ["Paradas informales de autobús", "OTROS FACTORES"],
-    ["Iluminación pública deficiente", "OTROS FACTORES"],
-    ["Basura en vía pública", "OTROS FACTORES"],
-    ["Parques sin mantenimiento", "OTROS FACTORES"],
-    ["Grafitis y vandalismo menor", "OTROS FACTORES"],
-    ["Parqueos improvisados", "OTROS FACTORES"],
-    ["Venta ambulante desordenada", "OTROS FACTORES"],
-    ["Feria del agricultor sin control", "OTROS FACTORES"],
-], columns=["Descriptor", "Categoría"]).assign(Categoría=lambda d: d["Categoría"].map(_force_cat))
 
-# ===================== Sinónimos / variaciones (opcional, amplialo si quieres) =========================
-SINONIMOS: Dict[str, List[str]] = {
-    # DELITO
-    "Consumo de drogas": ["consumo de drogas", "consumen drogas", "consumo marihuana", "fumando piedra"],
-    "Venta de drogas": ["venta de drogas", "punto de venta", "narcomenudeo"],
-    "Hurto": ["hurto", "sustraccion"],
-    "Robo a personas": ["robo a personas", "asalto a persona", "atraco a persona"],
-    "Robo a vivienda (Tacha)": ["tacha vivienda", "robo vivienda tacha"],
-    "Robo a vivienda (Intimidación)": ["asalto a vivienda", "intimidacion vivienda"],
-    "Robo a vehículos (Tacha)": ["tacha vehiculos", "robo tacha vehiculo"],
-    "Robo a vehiculos": ["robo de vehiculos", "robo carro", "robo moto"],
-    "Robo a comercio (Intimidación)": ["asalto a comercio"],
-    "Robo a comercio (Tacha)": ["robo comercio tacha"],
-    "Daños/Vandalismo": ["daños", "vandalismo", "grafiti", "daño a la propiedad"],
-    "Receptación": ["receptacion", "compra de robado", "reduccion"],
-    "Estafas o defraudación": ["estafas", "defraudacion", "estafa"],
-    "Robo de vehículos": ["robo de vehiculos"],
-    "Lesiones": ["lesiones", "golpiza"],
-    # RIESGO SOCIAL
-    "Falta de oportunidades laborales.": ["desempleo", "falta de empleo"],
-    "Falta de inversion social": ["falta de inversión social"],
-    "Personas con exceso de tiempo de ocio": ["ocio juvenil", "exceso de ocio"],
-    "Problemas Vecinales.": ["conflictos vecinales", "problemas vecinales"],
-    # OTROS FACTORES
-    "Consumo de alcohol en vía pública": ["consumo de alcohol en via publica", "licores en via publica"],
-    "Contaminacion Sonica": ["contaminacion sonora", "ruido", "musica alta", "bulla"],
-    "Deficiencia en la infraestructura vial": ["infraestructura vial", "huecos", "baches"],
-    "Lotes baldíos.": ["lote baldio", "lotes baldios"],
-    "Falta de salubridad publica": ["insalubridad"],
-    "Disturbios(Riñas)": ["disturbios", "riñas", "riña", "peleas"],
-    "Personas en situación de calle.": ["situacion de calle", "indigentes", "habitantes de calle"],
-}
+def dibujar_pareto(df_par: pd.DataFrame):
+    if df_par.empty:
+        st.info("Ingresa frecuencias (>0) para ver el gráfico de Pareto.")
+        return
+    x = np.arange(len(df_par))
+    freqs = df_par["frecuencia"].to_numpy()
+    pct_acum = df_par["pct_acum"].to_numpy()
 
-# ===================== Utilidades =====================
-import re as _re
-def strip_accents(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s)
-    return "".join(ch for ch in s if not unicodedata.combining(ch))
+    fig, ax1 = plt.subplots(figsize=(14, 5))
+    ax1.bar(x, freqs)  # sin especificar colores (recomendación)
+    ax1.set_ylabel("Frecuencia")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(df_par["descriptor"].tolist(), rotation=75, ha="right")
 
-def norm_text(s: Optional[str]) -> str:
-    if s is None:
-        return ""
-    s = strip_accents(str(s)).lower().strip()
-    s = _re.sub(r"\s+", " ", s)
-    return s
+    ax2 = ax1.twinx()
+    ax2.plot(x, pct_acum, marker="o")
+    ax2.set_ylabel("% acumulado")
+    ax2.set_ylim(0, 110)
 
-def make_unique_columns(cols: List[str]) -> List[str]:
-    seen, out = {}, []
-    for c in cols:
-        nc = norm_text(c)
-        seen[nc] = seen.get(nc, 0) + 1
-        out.append(nc if seen[nc] == 1 else f"{nc}__{seen[nc]}")
-    return out
+    # Líneas 80% (horizontal) y corte (vertical)
+    idx80 = np.argmax(pct_acum >= 80) if np.any(pct_acum >= 80) else len(pct_acum) - 1
+    ax2.axhline(80, linestyle="--")
+    ax1.axvline(idx80, linestyle=":")
 
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out.columns = make_unique_columns([str(c) for c in out.columns])
-    return out
+    st.pyplot(fig)
 
-@st.cache_data(show_spinner=False)
-def read_matriz(file_bytes: bytes) -> pd.DataFrame:
-    return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
 
-def build_regex_all(dic_df: pd.DataFrame) -> Dict[str, re.Pattern]:
-    compiled = {}
-    base_keys = list(dic_df["Descriptor"].astype(str)) + list(SINONIMOS.keys())
-    base_keys = sorted(set(base_keys))
-    for d in base_keys:
-        keys = SINONIMOS.get(d, []) + [d]
-        toks = [re.escape(norm_text(k)) for k in keys if norm_text(k)]
-        if toks:
-            compiled[d] = re.compile(r"(?:(?<=\s)|^)(" + "|".join(toks) + r")(?:(?=\s)|$)")
-    return compiled
-
-def header_marked_series(s: pd.Series) -> pd.Series:
-    num = pd.to_numeric(s, errors="coerce").fillna(0) != 0
-    txt = s.astype(str).apply(norm_text)
-    mask = ~txt.isin(["", "no", "0", "nan", "none", "false"])
-    return num | mask
-
-def detect_by_headers(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
-    for desc, pat in regex_by_desc.items():
-        hit_cols = [c for c in df_norm.columns if re.search(pat, " " + c + " ") is not None]
-        if not hit_cols:
-            continue
-        mask_any = None
-        for c in hit_cols:
-            m = header_marked_series(df_norm[c])
-            mask_any = m if mask_any is None else (mask_any | m)
-        if mask_any is not None:
-            counts[desc] = counts.get(desc, 0) + int(mask_any.sum())
-    return counts
-
-def guess_text_cols(df_norm: pd.DataFrame) -> List[str]:
-    hints = ["observ", "descr", "coment", "suger", "porque", "por que", "por qué", "detalle", "problema", "actividad", "insegur"]
-    out = []
-    for c in df_norm.columns:
-        s = df_norm[c]
-        if getattr(s, "dtype", None) == object or any(h in c for h in hints):
-            sample = s.astype(str).head(200).apply(norm_text)
-            if (sample != "").mean() > 0.05 or any(h in c for h in hints):
-                out.append(c)
-    return out
-
-def detect_in_text(df_norm: pd.DataFrame, regex_by_desc: Dict[str, re.Pattern]) -> Dict[str, int]:
-    counts: Dict[str, int] = {}
-    tcols = guess_text_cols(df_norm)
-    if not tcols:
-        return counts
-    for desc, pat in regex_by_desc.items():
-        mask_any = None
-        for c in tcols:
-            m = df_norm[c].astype(str).apply(norm_text).str.contains(pat, na=False)
-            mask_any = m if mask_any is None else (mask_any | m)
-        if mask_any is not None:
-            counts[desc] = counts.get(desc, 0) + int(mask_any.sum())
-    return counts
-
-def build_copilado_from_counts(counts_headers: Dict[str, int], counts_text: Dict[str, int]) -> pd.DataFrame:
-    total: Dict[str, int] = {}
-    keys = set(counts_headers) | set(counts_text)
-    for d in keys:
-        total[d] = counts_headers.get(d, 0) + counts_text.get(d, 0)
-    rows = [(d, f) for d, f in total.items() if f > 0]
-    if not rows:
-        return pd.DataFrame({"Descriptor": [], "Frecuencia": []})
-    df = pd.DataFrame(rows, columns=["Descriptor", "Frecuencia"])
-    return df.sort_values(["Frecuencia", "Descriptor"], ascending=[False, True], ignore_index=True)
-
-# --- Canonización (fuzzy) a descriptor del catálogo ---
-def build_canon_maps(dic_df: pd.DataFrame) -> Tuple[Dict[str,str], Dict[str,str]]:
-    desc_by_norm = {}
-    cat_by_norm  = {}
-    for _, r in dic_df.iterrows():
-        d = str(r["Descriptor"]).strip()
-        c = _force_cat(str(r["Categoría"]))
-        desc_by_norm[norm_text(d)] = d
-        cat_by_norm[norm_text(d)]  = c
-    return desc_by_norm, cat_by_norm
-
-def canoniza(raw_desc: str, desc_by_norm: Dict[str,str]) -> str:
-    n = norm_text(raw_desc)
-    if n in desc_by_norm:
-        return desc_by_norm[n]
-    candidates = list(desc_by_norm.keys())
-    hit = get_close_matches(n, candidates, n=1, cutoff=0.82)
-    if hit:
-        return desc_by_norm[hit[0]]
-    return raw_desc.strip()
-
-def build_pareto(copilado: pd.DataFrame, dic_df: pd.DataFrame) -> pd.DataFrame:
-    if copilado.empty:
-        return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"])
-
-    desc_by_norm, cat_by_norm = build_canon_maps(dic_df)
-
-    df = copilado.copy()
-    df["Descriptor"] = df["Descriptor"].astype(str)
-    df["Descriptor Canon"] = df["Descriptor"].apply(lambda x: canoniza(x, desc_by_norm))
-    df["Categoría"] = df["Descriptor Canon"].apply(lambda d: _force_cat(cat_by_norm.get(norm_text(d), "OTROS FACTORES")))
-
-    grp = df.groupby(["Categoría", "Descriptor Canon"], as_index=False)["Frecuencia"].sum()
-    grp = grp.rename(columns={"Descriptor Canon":"Descriptor"})
-
-    # TOTAL y % (fracciones 0–1)
-    total = int(grp["Frecuencia"].sum())
-    grp = grp.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
-    grp["Porcentaje"]  = (grp["Frecuencia"] / total)     # fracción 0–1
-    grp["% acumulado"] = grp["Porcentaje"].cumsum()      # fracción 0–1
-    grp["Acumulado"]   = grp["Frecuencia"].cumsum()
-    grp["80/20"]       = "80%"
-
-    # Garantías
-    assert int(grp["Acumulado"].iloc[-1]) == total
-    assert abs(float(grp["% acumulado"].iloc[-1]) - 1.0) < 1e-9
-
-    return grp[["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"]]
-
-# ===================== Excel con formato + gráfico =====================
-def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> bytes:
-    from pandas import ExcelWriter
-    import xlsxwriter  # noqa: F401
-
-    out = BytesIO()
-    with ExcelWriter(out, engine="xlsxwriter") as writer:
-        sheet = "Pareto Comunidad"
-        pareto.to_excel(writer, index=False, sheet_name=sheet)
+def exportar_excel_con_grafico(df_par: pd.DataFrame) -> bytes:
+    """Crea un XLSX con tabla + gráfico estilo Pareto."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        hoja = "Pareto"
+        df_par.to_excel(writer, sheet_name=hoja, index=False, startrow=0, startcol=0)
         wb = writer.book
-        ws = writer.sheets[sheet]
-        n = len(pareto)
-        if not n:
-            return out.getvalue()
+        ws = writer.sheets[hoja]
 
-        fmt_head = wb.add_format({"bold": True, "align": "center", "bg_color": "#D9E1F2", "border": 1})
-        fmt_pct  = wb.add_format({"num_format": "0,00%", "align": "right", "border": 1})
-        fmt_int  = wb.add_format({"num_format": "#,##0", "align": "center", "border": 1})
-        fmt_txt  = wb.add_format({"align": "left", "border": 1})
-        fmt_cent = wb.add_format({"align": "center"})
-        fmt_yel  = wb.add_format({"bg_color": "#FFF2CC"})
+        n = len(df_par)
+        # RANGOS
+        cats = f"=Pareto!$A$2:$A${n+1}"
+        vals = f"=Pareto!$C$2:$C${n+1}"
+        pcts = f"=Pareto!$F$2:$F${n+1}"
 
-        ws.set_row(0, None, fmt_head)
-        ws.set_column("A:A", 22, fmt_txt)
-        ws.set_column("B:B", 52, fmt_txt)
-        ws.set_column("C:C", 12, fmt_int)
-        ws.set_column("D:D", 12, fmt_pct)   # fracción → 0,00%
-        ws.set_column("E:E", 12, fmt_pct)
-        ws.set_column("F:F", 12, fmt_int)
-        ws.set_column("G:G", 8,  fmt_cent)
+        # FORMATO
+        ws.set_column("A:A", 55)
+        ws.set_column("B:B", 18)
+        ws.set_column("C:C", 12)
+        ws.set_column("D:D", 12)
+        ws.set_column("E:E", 12)
+        ws.set_column("F:F", 12)
 
-        cutoff_idx = int((pareto["% acumulado"] <= 0.80).sum())
-        if cutoff_idx > 0:
-            ws.conditional_format(1, 0, cutoff_idx, 6, {"type": "no_blanks", "format": fmt_yel})
+        total = int(df_par["frecuencia"].sum())
+        ws.write(n+2, 1, "TOTAL:")
+        ws.write(n+2, 2, total)
 
-        # columnas auxiliares
-        ws.write(0, 9, "80/20");  ws.set_column("J:J", 6,  None, {"hidden": True})
-        ws.write(0,10, "CorteX"); ws.set_column("K:K", 20, None, {"hidden": True})
-        ws.write(0,11, "%");      ws.set_column("L:L", 6,  None, {"hidden": True})
-        for i in range(n):
-            ws.write_number(i+1, 9, 0.80)
+        # GRÁFICO
+        chart = wb.add_chart({"type": "column"})
+        chart.add_series({"name": "Frecuencia", "categories": cats, "values": vals})
 
-        corte_row = max(1, cutoff_idx)
-        xcat = pareto.iloc[corte_row-1]["Descripcion"] if "Descripcion" in pareto.columns else pareto.iloc[corte_row-1]["Descriptor"]
-        ws.write(1,10, xcat); ws.write(2,10, xcat)
-        ws.write_number(1,11, 0.0); ws.write_number(2,11, 1.0)
+        line = wb.add_chart({"type": "line"})
+        line.add_series({"name": "% acumulado", "categories": cats, "values": pcts, "y2_axis": True, "marker": {"type": "circle"}})
 
-        # Barras: Frecuencia
-        chart = wb.add_chart({'type': 'column'})
-        points = [{"fill": {"color": "#5B9BD5"}} for _ in range(n)]
-        for i in range(cutoff_idx, n):
-            points[i] = {"fill": {"color": "#A6A6A6"}}
-        chart.add_series({
-            'name': 'Frecuencia',
-            'categories': [sheet, 1, 1, n, 1],
-            'values':     [sheet, 1, 2, n, 2],
-            'points': points,
-        })
-
-        # Línea: % acumulado (eje secundario)
-        line = wb.add_chart({'type': 'line'})
-        line.add_series({
-            'name': '% acumulado',
-            'categories': [sheet, 1, 1, n, 1],
-            'values':     [sheet, 1, 4, n, 4],
-            'y2_axis': True,
-            'line': {'color': '#ED7D31', 'width': 2.0}
-        })
         chart.combine(line)
+        chart.set_y_axis({"name": "Frecuencia"})
+        chart.set_y2_axis({"name": "% acumulado", "min": 0, "max": 110, "major_unit": 10})
+        chart.set_title({"name": "PARETO – Frecuencia y % acumulado"})
+        chart.set_legend({"position": "bottom"})
+        chart.set_size({"width": 1180, "height": 420})
+        ws.insert_chart("H2", chart)
 
-        # Línea horizontal 80%
-        h80 = wb.add_chart({'type': 'line'})
-        h80.add_series({
-            'name': '80/20',
-            'categories': [sheet, 1, 1, n, 1],
-            'values':     [sheet, 1, 9, n, 9],
-            'y2_axis': True,
-            'line': {'color': '#7F7F7F', 'width': 1.25}
-        })
-        chart.combine(h80)
+        # Sombrear filas hasta 80%
+        try:
+            idx80 = int(np.argmax(df_par["pct_acum"].values >= 80))
+            yellow = wb.add_format({"bg_color": "#FFF2CC"})
+            ws.conditional_format(1, 0, idx80+1, 5, {"type": "no_blanks", "format": yellow})
+        except Exception:
+            pass
 
-        # Línea vertical en el corte
-        vline = wb.add_chart({'type': 'line'})
-        vline.add_series({
-            'name': '',
-            'categories': [sheet, 1, 10, 2, 10],
-            'values':     [sheet, 1, 11, 2, 11],
-            'y2_axis': True,
-            'line': {'color': '#C00000', 'width': 2.25},
-            'marker': {'type': 'none'},
-        })
-        chart.combine(vline)
+    return output.getvalue()
 
-        chart.set_title({'name': titulo})
-        chart.set_plotarea({'border': {'none': True}})
-        chart.set_chartarea({'border': {'none': True}})
-        chart.set_x_axis({'num_font': {'rotation': -50}})
-        chart.set_y_axis({'major_gridlines': {'visible': False}})
-        chart.set_y2_axis({'min': 0, 'max': 1, 'major_unit': 0.1, 'num_format': '0%'})
-        chart.set_legend({'position': 'bottom'})
-        ws.insert_chart(1, 9, chart, {'x_scale': 1.9, 'y_scale': 1.6})
 
-    return out.getvalue()
+# =====================================================================
+# 3) INTERFAZ
+# =====================================================================
+st.title("Pareto de Descriptores")
+st.caption("Catálogo embebido y normalizado. Selecciona descriptores, asigna frecuencias y exporta el Pareto.")
 
-# ===================== UI =====================
-st.title("Pareto Comunidad – MSP (DELITO / RIESGO SOCIAL / OTROS FACTORES)")
+cat_df = pd.DataFrame(CATALOGO).sort_values(["categoria", "descriptor"]).reset_index(drop=True)
 
-plantilla = st.file_uploader("📄 Subí la Plantilla (XLSX) – hoja `matriz`", type=["xlsx"])
-if not plantilla:
-    st.info("Subí la Plantilla para procesar.")
-    st.stop()
+st.subheader("1) Selecciona descriptores")
+opciones = cat_df["descriptor"].tolist()
+seleccion = st.multiselect("Escoge uno o varios descriptores", options=opciones, default=[])
 
-try:
-    df_raw = read_matriz(plantilla.getvalue())
-except Exception as e:
-    st.error(f"Error leyendo 'matriz': {e}")
-    st.stop()
+st.subheader("2) Asigna la frecuencia")
+if seleccion:
+    df_sel = cat_df[cat_df["descriptor"].isin(seleccion)].copy()
+    df_sel["frecuencia"] = 0
 
-df = normalize_columns(df_raw)
-st.caption(f"Vista previa (primeras 20 de {len(df)} filas)")
-st.dataframe(df.head(20), use_container_width=True)
+    df_edit = st.data_editor(
+        df_sel,
+        key="editor_freq",
+        num_rows="fixed",
+        use_container_width=True,
+        column_config={
+            "descriptor": st.column_config.TextColumn("DESCRIPTOR", width="large"),
+            "categoria": st.column_config.TextColumn("CATEGORÍA", width="small"),
+            "frecuencia": st.column_config.NumberColumn("Frecuencia", min_value=0, step=1),
+        },
+    )
 
-# --- Si la hoja trae DESCRIPTOR + FRECUENCIA, usamos tal cual ---
-cols_norm = {c: norm_text(c) for c in df.columns}
-inv = {v: k for k, v in cols_norm.items()}
+    st.subheader("3) Pareto")
+    tabla = calcular_pareto(df_edit[["descriptor", "categoria", "frecuencia"]])
 
-desc_candidates = [col for col, n in cols_norm.items()
-                   if any(t in n for t in ["descriptor", "problema", "descriptor actualizado", "descripcion"])]
+    c1, c2 = st.columns([1, 1], gap="large")
+    with c1:
+        st.markdown("**Tabla de Pareto**")
+        if tabla.empty:
+            st.info("Ingresa frecuencias (>0) para ver la tabla.")
+        else:
+            st.dataframe(tabla, use_container_width=True, hide_index=True)
 
-freq_col = next((inv[x] for x in ["frecuencia"] if x in inv), None)
+    with c2:
+        st.markdown("**Gráfico de Pareto**")
+        dibujar_pareto(tabla)
 
-if freq_col and desc_candidates:
-    base = df[[desc_candidates[0], freq_col]].copy()
-    base.columns = ["Descriptor", "Frecuencia"]
-    base["Frecuencia"] = pd.to_numeric(base["Frecuencia"], errors="coerce").fillna(0).astype(int)
-    base = base.groupby("Descriptor", as_index=False)["Frecuencia"].sum()
+    st.subheader("4) Exportar")
+    if not tabla.empty:
+        st.download_button(
+            "⬇️ Descargar CSV",
+            data=tabla.to_csv(index=False).encode("utf-8"),
+            file_name="pareto_descriptores.csv",
+            mime="text/csv",
+        )
+        st.download_button(
+            "⬇️ Descargar Excel con gráfico",
+            data=exportar_excel_con_grafico(tabla),
+            file_name="pareto_descriptores.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 else:
-    regex = build_regex_all(DICCIONARIO_EMBEBIDO)
-    counts_h = detect_by_headers(df, regex)
-    counts_t = detect_in_text(df, regex)
-    base = build_copilado_from_counts(counts_h, counts_t)
-
-if base.empty or base["Frecuencia"].sum() == 0:
-    st.warning("No se detectaron descriptores o las frecuencias son 0. Revisá la plantilla.")
-    st.stop()
-
-pareto = build_pareto(base, DICCIONARIO_EMBEBIDO)
-
-# ---------- FORMATO DE PORCENTAJES EN PANTALLA (4,66%) ----------
-def pct_str(frac: float) -> str:
-    # convierte 0.0466 -> "4,66%"
-    s = f"{frac*100:.2f}%"
-    return s.replace(".", ",")
-
-display = pareto.copy()
-display["Porcentaje"] = display["Porcentaje"].apply(pct_str)
-display["% acumulado"] = display["% acumulado"].apply(pct_str)
-
-TOTAL = int(pareto["Acumulado"].iloc[-1])
-st.subheader(f"Pareto Comunidad (TOTAL = {TOTAL:,})")
-st.dataframe(display, use_container_width=True)
-
-# ======== Gráfico rápido (barras + % acumulado + 80%) ========
-import altair as alt
-top_df = pareto.head(TOP_N_GRAFICO).copy()
-bars = alt.Chart(top_df).mark_bar().encode(
-    x=alt.X('Descriptor:N', sort=None, axis=alt.Axis(labelAngle=-50)),
-    y=alt.Y('Frecuencia:Q')
-)
-line = alt.Chart(top_df).mark_line(point=True).encode(
-    x='Descriptor:N',
-    y=alt.Y('% acumulado:Q', axis=alt.Axis(format='%'), scale=alt.Scale(domain=[0,1])),
-    color=alt.value('#ED7D31')
-)
-h80 = alt.Chart(pd.DataFrame({'y':[0.8]})).mark_rule().encode(y=alt.Y('y:Q', axis=alt.Axis(format='%')))
-st.altair_chart((bars + line + h80).resolve_scale(y='independent'), use_container_width=True)
-
-# ========= Descargar Excel definitivo =========
-st.subheader("Descargar Excel final")
-st.download_button(
-    "⬇️ Pareto Comunidad (Excel con formato y gráfico)",
-    data=export_excel(pareto, titulo="PARETO COMUNIDAD"),
-    file_name="Pareto_Comunidad.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-
+    st.info("Selecciona al menos un descriptor para continuar.")
 
 
