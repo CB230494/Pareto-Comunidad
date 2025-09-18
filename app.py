@@ -1,334 +1,398 @@
-# app.py — Pareto Comunidad (DELITO / RIESGO SOCIAL / OTROS FACTORES)
-# Cuenta celdas con dato en columnas AI:ET (hoja 'matriz') y arma el Pareto.
+# app.py — Generador de Pareto (delitos, riesgos sociales y otros factores)
+# ─────────────────────────────────────────────────────────────────────────────
+# ✓ Lee tu "matriz" (xlsx) tal y como la usas hoy (115+ columnas, 500+ filas)
+# ✓ Detecta automáticamente las columnas con encabezado AMARILLO (entre un rango)
+# ✓ También puedes indicar un rango de columnas (por letras, ej. AI–ET)
+# ✓ Cuenta TODAS las menciones (no vacíos, no "0") por descriptor
+# ✓ Calcula % y % acumulado (el total del acumulado es el total de datos)
+# ✓ Dibuja el Pareto igual al ejemplo (barras + línea acumulada + 80/20)
+# ✓ Permite descargar: PNG del gráfico y Excel con la tabla + el gráfico embebido
+#
+# Requisitos (requirements.txt sugerido):
+#   streamlit
+#   pandas
+#   openpyxl
+#   matplotlib
+#   numpy
+#
+# Uso rápido en Streamlit Cloud/Local:
+#   streamlit run app.py
+#
+# Notas:
+# - Si tu encabezado no está en la fila 1, cámbialo en el panel lateral.
+# - Por defecto se detectan encabezados AMARILLOS típicos (FFEB9C, FFF2CC, FFD966, FFFF00, etc.).
+# - El título del Pareto se arma con "PARETO COMUNIDAD <nombre>".
+# - El rango de columnas (por letras) es opcional; se usa para limitar la búsqueda.
 
-import re
-import unicodedata
+from __future__ import annotations
+import io
 from io import BytesIO
-from typing import Dict, List, Optional
+from typing import List, Tuple, Optional
 
-import numpy as np
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter, column_index_from_string
+from openpyxl.drawing.image import Image as XLImage
 
-st.set_page_config(page_title="Pareto Comunidad – MSP", layout="wide", initial_sidebar_state="collapsed")
-TOP_N_GRAFICO = 60
+# ─────────────────────────────────────────────────────────────────────────────
+# Utilidades
+# ─────────────────────────────────────────────────────────────────────────────
 
-# ===================== CATEGORÍAS PERMITIDAS =====================
-CATEGORIAS_VALIDAS = {"DELITO", "RIESGO SOCIAL", "OTROS FACTORES"}
-
-def _force_cat(x: str) -> str:
-    n = (x or "").strip().upper()
-    return n if n in CATEGORIAS_VALIDAS else "OTROS FACTORES"
-
-# ===================== Diccionario embebido (AMPLIABLE por ti) =====================
-# Si un descriptor no aparece aquí, se categoriza como "OTROS FACTORES".
-CAT_MAP = {
-    # ---- DELITO ----
-    "Venta de drogas": "DELITO",
-    "Consumo de drogas": "DELITO",
-    "Bunker (Puntos de venta y consumo de drogas)": "DELITO",
-    "Hurto": "DELITO",
-    "Robo a personas": "DELITO",
-    "Robo a vivienda (Tacha)": "DELITO",
-    "Robo a vivienda (Intimidación)": "DELITO",
-    "Robo a vehículos (Tacha)": "DELITO",
-    "Robo a comercio (Intimidación)": "DELITO",
-    "Robo a comercio (Tacha)": "DELITO",
-    "Robo de vehículos": "DELITO",
-    "Receptación": "DELITO",
-    "Estafas o defraudación": "DELITO",
-    "Daños/Vandalismo": "DELITO",
-    "Lesiones": "DELITO",
-    "Contrabando": "DELITO",
-    "Homicidios": "DELITO",
-    "Extorsión": "DELITO",
-    "Delitos sexuales": "DELITO",
-    "Estafa informática": "DELITO",
-    "Robo de cable": "DELITO",
-    "Robo de bienes agrícola": "DELITO",
-    "Robo a edificacion (Tacha)": "DELITO",
-    "Robo a transporte público con Intimidación": "DELITO",
-
-    # ---- RIESGO SOCIAL ----
-    "Falta de inversion social": "RIESGO SOCIAL",
-    "Falta de oportunidades laborales.": "RIESGO SOCIAL",
-    "Personas con exceso de tiempo de ocio": "RIESGO SOCIAL",
-    "Violencia intrafamiliar": "RIESGO SOCIAL",
-    "Desvinculación escolar": "RIESGO SOCIAL",
-    "Abandono de personas (Menor de edad, adulto mayor o capacidades diferentes)": "RIESGO SOCIAL",
-
-    # ---- OTROS FACTORES ----
-    "Consumo de alcohol en vía pública": "OTROS FACTORES",
-    "Deficiencia en la infraestructura vial": "OTROS FACTORES",
-    "Contaminacion Sonica": "OTROS FACTORES",
-    "Lotes baldíos.": "OTROS FACTORES",
-    "Falta de salubridad publica": "OTROS FACTORES",
-    "Disturbios(Riñas)": "OTROS FACTORES",
-    "Personas en situación de calle.": "OTROS FACTORES",
-    "Usurpacion de terrenos (Precarios)": "OTROS FACTORES",
-    "Pérdida de espacios públicos": "OTROS FACTORES",
-    "Deficiencias en el alumbrado publico": "OTROS FACTORES",
-    "Acoso sexual callejero": "OTROS FACTORES",
-    "Hospedajes ilegales (Cuarterías)": "OTROS FACTORES",
-    "Ventas informales (Ambulantes)": "OTROS FACTORES",
-    "Maltrato animal": "OTROS FACTORES",
-    "Tala ilegal": "OTROS FACTORES",
-    "Trata de personas": "OTROS FACTORES",
-    "Explotacion Laboral infantil": "OTROS FACTORES",
-    "Caza ilegal": "OTROS FACTORES",
-    "Abigeato (Robo y destace de ganado)": "OTROS FACTORES",
-    "Zona de prostitución": "OTROS FACTORES",
-    "Explotacion Sexual infantil": "OTROS FACTORES",
-    "Tráfico ilegal de personas": "OTROS FACTORES",
-    "Robo de combustible": "OTROS FACTORES",
-    "Pesca ilegal": "OTROS FACTORES",
+YELLOW_HEXES = {
+    "FFFF00",  # amarillo puro
+    "FFEB9C",  # amarillo pastel (Excel Theme)
+    "FFF2CC",  # amarillo claro (Excel Theme)
+    "FFE699",
+    "FFD966",
+    "FFF4CC",
 }
 
-# ===================== Utilidades =====================
-def strip_accents(s: str) -> str:
-    s = unicodedata.normalize("NFKD", s)
-    return "".join(ch for ch in s if not unicodedata.combining(ch))
 
-def norm_text(s: Optional[str]) -> str:
-    if s is None:
+def _strip(s):
+    if pd.isna(s):
         return ""
-    s = strip_accents(str(s)).lower().strip()
-    s = re.sub(r"\s+", " ", s)
-    return s
+    return str(s).strip()
 
-def excel_col_to_index(col: str) -> int:
-    col = col.strip().upper()
-    n = 0
-    for ch in col:
-        n = n * 26 + (ord(ch) - ord('A') + 1)
-    return n
 
-def read_matriz(file_bytes: bytes) -> pd.DataFrame:
-    return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
+def detectar_columnas_amarillas(
+    xlsx_file: BytesIO,
+    sheet_name: Optional[str],
+    header_row: int = 1,
+    limit_from_col: Optional[str] = None,
+    limit_to_col: Optional[str] = None,
+) -> List[str]:
+    """Devuelve una lista de NOMBRES DE COLUMNA (texto de encabezado)
+    que están pintadas de amarillo en la fila de encabezado.
 
-# celdas que cuentan como “dato”
-NEGATIVOS = {"", "0", "no", "false", "nan", "ninguno", "n/a", "na"}
+    - Si se dan limit_from_col y limit_to_col (letras Excel, ej. AI y ET),
+      se restringe la búsqueda a ese rango.
+    """
+    xlsx_file.seek(0)
+    wb = load_workbook(filename=xlsx_file, data_only=True)
+    ws = wb[sheet_name] if sheet_name else wb.active
 
-def cell_has_data(v) -> bool:
-    if pd.isna(v): 
-        return False
-    # numérico ≠ 0
-    try:
-        f = float(str(v).replace(",", "."))
-        return f != 0.0
-    except Exception:
-        pass
-    # texto no negativo
-    return norm_text(v) not in NEGATIVOS
+    start_col_idx = 1
+    end_col_idx = ws.max_column
+    if limit_from_col and limit_to_col:
+        start_col_idx = column_index_from_string(limit_from_col)
+        end_col_idx = column_index_from_string(limit_to_col)
 
-# ===================== Núcleo: contar AI:ET por columna =====================
-def counts_ai_et(df: pd.DataFrame) -> pd.DataFrame:
-    # límites AI:ET (0-based)
-    L = excel_col_to_index("AI") - 1
-    R = excel_col_to_index("ET") - 1
-    L = max(0, min(L, df.shape[1]-1))
-    R = max(0, min(R, df.shape[1]-1))
-    if L > R:
-        L, R = 0, df.shape[1]-1
+    headers_yellow: List[str] = []
+    for col_idx in range(start_col_idx, end_col_idx + 1):
+        cell = ws.cell(row=header_row, column=col_idx)
+        fill = cell.fill
+        is_yellow = False
+        if fill and fill.patternType and fill.fgColor is not None:
+            rgb = None
+            # openpyxl puede traer .rgb o .indexed/theme; priorizamos rgb
+            if hasattr(fill.fgColor, "rgb") and fill.fgColor.rgb:
+                rgb = fill.fgColor.rgb
+            elif hasattr(fill.fgColor, "indexed") and fill.fgColor.indexed is not None:
+                # no fiable para color exacto; lo ignoramos
+                rgb = None
+            if rgb:
+                rgb = rgb.upper().replace("0x", "").replace("#", "")
+                # Excel guarda ARGB (8 chars). Conservamos los últimos 6 (RGB)
+                if len(rgb) == 8:
+                    rgb = rgb[2:]
+                if rgb in YELLOW_HEXES:
+                    is_yellow = True
+        if is_yellow:
+            headers_yellow.append(str(cell.value) if cell.value is not None else get_column_letter(col_idx))
 
-    sub = df.iloc[:, L:R+1]
+    return [h for h in headers_yellow if _strip(h) != ""]
 
-    # evitar filas totalmente vacías dentro del rango
-    rowmask = sub.applymap(cell_has_data).any(axis=1)
-    sub = sub.loc[rowmask]
 
-    rows = []
-    for c in sub.columns:
-        freq = int(sub[c].apply(cell_has_data).sum())
-        if freq > 0:
-            rows.append((str(df.columns[df.columns.get_loc(c)]), freq))
-    if not rows:
-        return pd.DataFrame({"Descriptor": [], "Frecuencia": []})
-    out = pd.DataFrame(rows, columns=["Descriptor", "Frecuencia"])
+def cargar_dataframe(
+    xlsx_file: BytesIO,
+    sheet_name: Optional[str],
+    header_row: int = 1,
+) -> pd.DataFrame:
+    """Carga toda la hoja como DataFrame usando pandas, tomando header_row como encabezado."""
+    xlsx_file.seek(0)
+    df = pd.read_excel(xlsx_file, sheet_name=sheet_name, header=header_row - 1, engine="openpyxl")
+    # Elimina filas totalmente vacías
+    df = df.dropna(how="all").reset_index(drop=True)
+    return df
+
+
+def contar_frecuencias(df: pd.DataFrame, columnas: List[str]) -> pd.DataFrame:
+    """Cuenta las menciones por columna. Considera como mención todo valor NO vacío y diferente de 0.
+    Devuelve un DataFrame con columnas: DESCRIPTOR, frecuencia.
+    """
+    cols_ok = [c for c in columnas if c in df.columns]
+    if not cols_ok:
+        return pd.DataFrame(columns=["DESCRIPTOR", "frecuencia"])  # vacío
+
+    # Conteo por columna: no vacíos y distintos de 0
+    freqs = {}
+    for c in cols_ok:
+        serie = df[c]
+        # True si hay valor: no NaN, no "", no 0 (numérico o texto "0")
+        mask = ~serie.isna()
+        mask &= serie.astype(str).str.strip().ne("")
+        # Quitar ceros explícitos
+        try:
+            # intenta convertir a numérico; los no numéricos quedan NaN
+            num = pd.to_numeric(serie, errors="coerce")
+            mask &= ~((~num.isna()) & (num == 0))
+        except Exception:
+            pass
+        freqs[c] = int(mask.sum())
+
+    out = (
+        pd.DataFrame({"DESCRIPTOR": list(freqs.keys()), "frecuencia": list(freqs.values())})
+        .query("frecuencia > 0")
+        .sort_values("frecuencia", ascending=False)
+        .reset_index(drop=True)
+    )
     return out
 
-# ===================== Pareto =====================
-def build_pareto(base: pd.DataFrame) -> pd.DataFrame:
-    if base.empty:
-        return pd.DataFrame(columns=["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"])
 
-    df = base.copy()
-    # Categoría (solo 3). Si no está en el mapa, cae en OTROS FACTORES.
-    df["Categoría"] = df["Descriptor"].map(CAT_MAP).apply(_force_cat)
+def tabla_pareto(df_freqs: pd.DataFrame) -> pd.DataFrame:
+    """Calcula % y acumulados para Pareto."""
+    total = int(df_freqs["frecuencia"].sum())
+    if total == 0:
+        # estructura vacía amigable
+        return pd.DataFrame(
+            columns=["#", "DESCRIPTOR", "frecuencia", "%", "acumul", "acumul%", "dentro_80"]
+        )
 
-    total = int(df["Frecuencia"].sum())
-    df = df.sort_values(["Frecuencia","Descriptor"], ascending=[False, True], ignore_index=True)
-    df["Porcentaje"]  = df["Frecuencia"] / total      # fracción 0–1
-    df["% acumulado"] = df["Porcentaje"].cumsum()     # fracción 0–1
-    df["Acumulado"]   = df["Frecuencia"].cumsum()
-    df["80/20"]       = "80%"
+    df = df_freqs.copy()
+    df["%"] = (df["frecuencia"] / total) * 100.0
+    df["acumul"] = df["frecuencia"].cumsum()
+    df["acumul%"] = df["%"]].cumsum()
+    df["#"] = np.arange(1, len(df) + 1)
+    df["dentro_80"] = df["acumul%"] <= 80.0
+    # Reordenamos columnas para que coincidan con el ejemplo
+    df = df[["#", "DESCRIPTOR", "frecuencia", "%", "acumul", "acumul%", "dentro_80"]]
+    return df, total
 
-    assert int(df["Acumulado"].iloc[-1]) == total
-    return df[["Categoría","Descriptor","Frecuencia","Porcentaje","% acumulado","Acumulado","80/20"]]
 
-# ===================== Excel con formato + gráfico =====================
-def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> bytes:
+def graficar_pareto(df_pareto: pd.DataFrame, titulo: str = "PARETO") -> plt.Figure:
+    """Devuelve la figura Matplotlib del Pareto (barras + acumulado + 80/20)."""
+    if df_pareto.empty:
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax.text(0.5, 0.5, "Sin datos", ha="center", va="center", fontsize=16)
+        ax.axis("off")
+        return fig
+
+    x = np.arange(len(df_pareto))
+    frec = df_pareto["frecuencia"].values
+    acum_pct = df_pareto["acumul%"].values
+
+    fig, ax1 = plt.subplots(figsize=(18, 7), dpi=130)
+    bars = ax1.bar(x, frec, label="Frecuencia", color="#4E79A7")
+    ax1.set_ylabel("Frecuencia")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(df_pareto["DESCRIPTOR"].values, rotation=65, ha="right")
+    ax1.grid(axis="y", alpha=0.25)
+
+    # Eje 2: % acumulado
+    ax2 = ax1.twinx()
+    ax2.plot(x, acum_pct, marker="o", linewidth=2.2, label="Acumulado", color="#F28E2B")
+    ax2.set_ylabel("Porcentaje acumulado")
+    ax2.set_ylim(0, 105)
+    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, pos: f"{v:.0f}%"))
+
+    # Línea 80/20 y corte vertical
+    ax2.axhline(80, color="#707070", linestyle="--", linewidth=1.8, label="80/20")
+    # índice donde se cruza el 80%
+    idx80 = int(np.argmax(acum_pct >= 80)) if (acum_pct >= 80).any() else len(acum_pct) - 1
+    ax1.axvline(idx80, color="#D62728", linestyle="-", linewidth=1.6)
+
+    # Título y leyenda unificada
+    fig.suptitle(titulo, fontsize=16, y=0.98)
+    lines, labels = [], []
+    for ax in (ax1, ax2):
+        L = ax.get_legend_handles_labels()
+        lines += L[0]
+        labels += L[1]
+    ax1.legend(lines, labels, loc="upper right")
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+    return fig
+
+
+def formatear_tabla_mostrar(df: pd.DataFrame) -> pd.DataFrame:
+    """Devuelve una copia con formatos para presentar en pantalla (no cambia los tipos)."""
+    if df.empty:
+        return df
+    out = df.copy()
+    out["%"] = out["%"].map(lambda v: f"{v:,.2f}%")
+    out["acumul%"] = out["acumul%"].map(lambda v: f"{v:,.2f}%")
+    out["dentro_80"] = out["dentro_80"].map(lambda b: "Sí" if bool(b) else "No")
+    return out
+
+
+def exportar_excel_con_grafico(
+    df_pareto: pd.DataFrame,
+    fig: plt.Figure,
+    nombre_hoja: str = "PARETO",
+) -> BytesIO:
+    """Genera un Excel con la tabla y pega el gráfico como imagen en la misma hoja."""
     from pandas import ExcelWriter
-    import xlsxwriter  # noqa: F401
 
-    out = BytesIO()
-    with ExcelWriter(out, engine="xlsxwriter") as writer:
-        sheet = "Pareto Comunidad"
-        pareto.to_excel(writer, index=False, sheet_name=sheet)
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        # Guardar la tabla (sin formateo de strings, para que Excel pueda calcular)
+        df_x = df_pareto.copy()
+        df_x.to_excel(writer, sheet_name=nombre_hoja, index=False)
         wb = writer.book
-        ws = writer.sheets[sheet]
-        n = len(pareto)
-        if not n:
-            return out.getvalue()
+        ws = wb[nombre_hoja]
+        # Añadir imagen del gráfico
+        img_io = BytesIO()
+        fig.savefig(img_io, format="png", dpi=220, bbox_inches="tight")
+        img_io.seek(0)
+        img = XLImage(img_io)
+        # Colocar el gráfico debajo de la tabla (fila = len(df) + 4)
+        fila_img = len(df_x) + 4
+        celda = f"B{fila_img}"
+        ws.add_image(img, celda)
+        writer._save()
+    bio.seek(0)
+    return bio
 
-        fmt_head = wb.add_format({"bold": True, "align": "center", "bg_color": "#D9E1F2", "border": 1})
-        fmt_pct  = wb.add_format({"num_format": "0,00%", "align": "right", "border": 1})
-        fmt_int  = wb.add_format({"num_format": "#,##0", "align": "center", "border": 1})
-        fmt_txt  = wb.add_format({"align": "left", "border": 1})
-        fmt_cent = wb.add_format({"align": "center"})
-        fmt_yel  = wb.add_format({"bg_color": "#FFF2CC"})
 
-        ws.set_row(0, None, fmt_head)
-        ws.set_column("A:A", 22, fmt_txt)
-        ws.set_column("B:B", 52, fmt_txt)
-        ws.set_column("C:C", 12, fmt_int)
-        ws.set_column("D:D", 12, fmt_pct)   # fracción → 0,00%
-        ws.set_column("E:E", 12, fmt_pct)
-        ws.set_column("F:F", 12, fmt_int)
-        ws.set_column("G:G", 8,  fmt_cent)
+# ─────────────────────────────────────────────────────────────────────────────
+# UI — Streamlit
+# ─────────────────────────────────────────────────────────────────────────────
 
-        cutoff_idx = int((pareto["% acumulado"] <= 0.80).sum())
-        if cutoff_idx > 0:
-            ws.conditional_format(1, 0, cutoff_idx, 6, {"type": "no_blanks", "format": fmt_yel})
+st.set_page_config(page_title="Generador de Pareto – Comunidad", layout="wide")
+st.title("Generador de Pareto – Comunidad")
 
-        # Auxiliares para líneas
-        ws.write(0, 9, "80/20");  ws.set_column("J:J", 6,  None, {"hidden": True})
-        ws.write(0,10, "CorteX"); ws.set_column("K:K", 20, None, {"hidden": True})
-        ws.write(0,11, "%");      ws.set_column("L:L", 6,  None, {"hidden": True})
-        for i in range(n):
-            ws.write_number(i+1, 9, 0.80)
+with st.sidebar:
+    st.header("⚙️ Configuración")
+    comunidad = st.text_input("Nombre de la comunidad (para el título)", value="DESAMPARADOS NORTE")
 
-        corte_row = max(1, cutoff_idx)
-        xcat = pareto.iloc[corte_row-1]["Descriptor"]
-        ws.write(1,10, xcat); ws.write(2,10, xcat)
-        ws.write_number(1,11, 0.0); ws.write_number(2,11, 1.0)
+    archivo = st.file_uploader("Matriz (Excel .xlsx)", type=["xlsx"], accept_multiple_files=False)
 
-        # Barras
-        chart = wb.add_chart({'type': 'column'})
-        points = [{"fill": {"color": "#5B9BD5"}} for _ in range(n)]
-        for i in range(cutoff_idx, n):
-            points[i] = {"fill": {"color": "#A6A6A6"}}
-        chart.add_series({
-            'name': 'Frecuencia',
-            'categories': [sheet, 1, 1, n, 1],
-            'values':     [sheet, 1, 2, n, 2],
-            'points': points,
-        })
+    hoja = st.text_input("Nombre de la hoja (opcional; deja vacío para la activa)", value="")
+    header_row = st.number_input("Fila del encabezado", min_value=1, value=1, step=1)
 
-        # % acumulado (eje secundario 0–100%)
-        line = wb.add_chart({'type': 'line'})
-        line.add_series({
-            'name': '% acumulado',
-            'categories': [sheet, 1, 1, n, 1],
-            'values':     [sheet, 1, 4, n, 4],
-            'y2_axis': True,
-            'line': {'color': '#ED7D31', 'width': 2.0}
-        })
-        chart.combine(line)
+    st.markdown("**Rango de columnas (opcional, por letras Excel)**")
+    col1, col2 = st.columns(2)
+    with col1:
+        from_col = st.text_input("Desde", value="AI")
+    with col2:
+        to_col = st.text_input("Hasta", value="ET")
 
-        # 80%
-        h80 = wb.add_chart({'type': 'line'})
-        h80.add_series({
-            'name': '80/20',
-            'categories': [sheet, 1, 1, n, 1],
-            'values':     [sheet, 1, 9, n, 9],
-            'y2_axis': True,
-            'line': {'color': '#7F7F7F', 'width': 1.25}
-        })
-        chart.combine(h80)
+    usar_rango = st.checkbox("Limitar a este rango (recomendado)", value=True)
 
-        # Línea vertical
-        vline = wb.add_chart({'type': 'line'})
-        vline.add_series({
-            'name': '',
-            'categories': [sheet, 1, 10, 2, 10],
-            'values':     [sheet, 1, 11, 2, 11],
-            'y2_axis': True,
-            'line': {'color': '#C00000', 'width': 2.25},
-            'marker': {'type': 'none'},
-        })
-        chart.combine(vline)
+    detectar_amarillas = st.checkbox("Detectar encabezados AMARILLOS y preseleccionar", value=True)
 
-        chart.set_title({'name': titulo})
-        chart.set_plotarea({'border': {'none': True}})
-        chart.set_chartarea({'border': {'none': True}})
-        chart.set_x_axis({'num_font': {'rotation': -50}})
-        chart.set_y_axis({'major_gridlines': {'visible': False}})
-        chart.set_y2_axis({'min': 0, 'max': 1, 'major_unit': 0.1, 'num_format': '0%'})
-        chart.set_legend({'position': 'bottom'})
-        ws.insert_chart(1, 9, chart, {'x_scale': 1.9, 'y_scale': 1.6})
+    st.markdown("— *Si no quieres la detección por color, desmárcalo y elige manualmente luego.*")
 
-    return out.getvalue()
+    procesar = st.button("Procesar Pareto", type="primary")
 
-# ===================== UI =====================
-st.title("Pareto Comunidad – MSP (DELITO / RIESGO SOCIAL / OTROS FACTORES)")
+if archivo and procesar:
+    # 1) Detectar columnas amarillas (opcional)
+    try:
+        sheetname = hoja if hoja.strip() else None
+        rango_desde = from_col.strip().upper() if (usar_rango and from_col.strip()) else None
+        rango_hasta = to_col.strip().upper() if (usar_rango and to_col.strip()) else None
 
-up = st.file_uploader("📄 Subí la Plantilla (XLSX) – hoja `matriz`", type=["xlsx"])
-if not up:
-    st.info("Subí la Plantilla para procesar.")
-    st.stop()
+        preselect_cols: List[str] = []
+        if detectar_amarillas:
+            preselect_cols = detectar_columnas_amarillas(
+                archivo, sheetname, header_row=header_row,
+                limit_from_col=rango_desde, limit_to_col=rango_hasta,
+            )
+    except Exception as e:
+        st.error(f"Error detectando encabezados amarillos: {e}")
+        preselect_cols = []
 
-try:
-    df = read_matriz(up.getvalue())
-except Exception as e:
-    st.error(f"Error leyendo 'matriz': {e}")
-    st.stop()
+    # 2) Cargar DataFrame completo
+    try:
+        df = cargar_dataframe(archivo, sheetname, header_row)
+    except Exception as e:
+        st.error(f"No se pudo leer el Excel: {e}")
+        st.stop()
 
-st.caption(f"Vista previa (primeras 20 de {len(df)} filas)")
-st.dataframe(df.head(20), use_container_width=True)
+    # 3) Determinar las columnas candidatas para conteo
+    if usar_rango and from_col.strip() and to_col.strip():
+        try:
+            # Restringimos las columnas del DataFrame por posición (Excel-like)
+            archivo.seek(0)
+            wb = load_workbook(filename=archivo, data_only=True)
+            ws = wb[sheetname] if sheetname else wb.active
+            idx_from = column_index_from_string(from_col.strip().upper())
+            idx_to = column_index_from_string(to_col.strip().upper())
+            # Sacamos los encabezados reales en ese rango
+            headers_rango = []
+            for col_idx in range(idx_from, idx_to + 1):
+                val = ws.cell(row=header_row, column=col_idx).value
+                if val is not None and str(val).strip() != "":
+                    headers_rango.append(str(val))
+            candidatos = [h for h in headers_rango if h in df.columns]
+        except Exception:
+            candidatos = list(df.columns)
+    else:
+        candidatos = list(df.columns)
 
-base = counts_ai_et(df)
-if base.empty or base["Frecuencia"].sum() == 0:
-    st.warning("No se hallaron datos en el rango AI:ET. Revisá la plantilla.")
-    st.stop()
+    # 4) Selector manual para el usuario (preselecciona amarillas si hay)
+    st.subheader("Selección de columnas a considerar (delitos, riesgos sociales y otros factores)")
+    seleccion = st.multiselect(
+        "Elige las columnas (encabezados) a contar como descriptores",
+        options=candidatos,
+        default=[c for c in preselect_cols if c in candidatos] or candidatos,
+        help="Se cuentan todas las celdas NO vacías y distintas de 0 por cada columna."
+    )
 
-pareto = build_pareto(base)
+    if not seleccion:
+        st.warning("Debes seleccionar al menos una columna.")
+        st.stop()
 
-# Mostrar con coma decimal
-def pct_str(frac: float) -> str:
-    return f"{frac*100:.2f}%".replace(".", ",")
+    # 5) Conteo y tabla Pareto
+    df_freqs = contar_frecuencias(df, seleccion)
+    if df_freqs.empty:
+        st.warning("No hay menciones en las columnas seleccionadas.")
+        st.stop()
 
-display = pareto.copy()
-display["Porcentaje"] = display["Porcentaje"].apply(pct_str)
-display["% acumulado"] = display["% acumulado"].apply(pct_str)
+    df_pareto, total = tabla_pareto(df_freqs)
 
-TOTAL = int(pareto["Acumulado"].iloc[-1])
-st.subheader(f"Pareto Comunidad (TOTAL = {TOTAL:,})")
-st.dataframe(display, use_container_width=True)
+    # 6) Mostrar KPIs
+    st.markdown(
+        f"**Total de filas analizadas:** {len(df)}  •  **Columnas consideradas:** {len(seleccion)}  •  **Total de datos (∑ frecuencia):** {total}"
+    )
 
-# Gráfico rápido (pantalla)
-import altair as alt
-top_df = pareto.head(TOP_N_GRAFICO).copy()
-bars = alt.Chart(top_df).mark_bar().encode(
-    x=alt.X('Descriptor:N', sort=None, axis=alt.Axis(labelAngle=-50)),
-    y=alt.Y('Frecuencia:Q')
-)
-line = alt.Chart(top_df).mark_line(point=True).encode(
-    x='Descriptor:N',
-    y=alt.Y('% acumulado:Q', axis=alt.Axis(format='%'), scale=alt.Scale(domain=[0,1])),
-    color=alt.value('#ED7D31')
-)
-h80 = alt.Chart(pd.DataFrame({'y':[0.8]})).mark_rule().encode(y=alt.Y('y:Q', axis=alt.Axis(format='%')))
-st.altair_chart((bars + line + h80).resolve_scale(y='independent'), use_container_width=True)
+    # 7) Tabla formateada
+    st.subheader("Tabla de Pareto")
+    st.dataframe(formatear_tabla_mostrar(df_pareto), use_container_width=True)
 
-# Descargar Excel
-st.subheader("Descargar Excel final")
-st.download_button(
-    "⬇️ Pareto Comunidad (Excel con formato y gráfico)",
-    data=export_excel(pareto, titulo="PARETO COMUNIDAD"),
-    file_name="Pareto_Comunidad.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+    # 8) Gráfico
+    titulo = f"PARETO COMUNIDAD {comunidad.strip().upper()}"
+    fig = graficar_pareto(df_pareto, titulo)
+    st.pyplot(fig, use_container_width=True)
+
+    # 9) Descargas
+    colA, colB = st.columns(2)
+    with colA:
+        # PNG
+        buf_png = BytesIO()
+        fig.savefig(buf_png, format="png", dpi=220, bbox_inches="tight")
+        buf_png.seek(0)
+        st.download_button(
+            "⬇️ Descargar gráfico (PNG)", data=buf_png, file_name=f"pareto_{comunidad.replace(' ', '_').lower()}.png",
+            mime="image/png"
+        )
+    with colB:
+        # Excel con tabla + gráfico
+        excel_io = exportar_excel_con_grafico(df_pareto, fig, nombre_hoja="PARETO")
+        st.download_button(
+            "⬇️ Descargar Excel (tabla + gráfico)", data=excel_io,
+            file_name=f"pareto_{comunidad.replace(' ', '_').lower()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+else:
+    st.info(
+        "Sube tu matriz y presiona **Procesar Pareto**. Por defecto detecto los **encabezados amarillos** (AI–ET) y cuento todas las menciones."
+    )
+
 
 
 
