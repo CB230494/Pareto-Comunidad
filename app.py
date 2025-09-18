@@ -1,5 +1,6 @@
 # app.py — Pareto Comunidad (DELITO / RIESGO SOCIAL / OTROS FACTORES)
-# Muestra porcentajes en pantalla como "4,66%" y exporta Excel con gráfico Pareto.
+# - Detecta solo en columnas AI:ET
+# - % en pantalla como "4,66%" y en Excel eje derecho 0–100%
 
 import re
 import unicodedata
@@ -23,8 +24,7 @@ def _force_cat(x: str) -> str:
         return n
     return "OTROS FACTORES"
 
-# ===================== Diccionario embebido (EDITABLE/AMPLIABLE) ======================
-# Formato: ["Descriptor correcto", "Categoría"]
+# ===================== Diccionario embebido (ejemplo; amplialo libremente) ======================
 DICCIONARIO_EMBEBIDO = pd.DataFrame([
     # -------- DELITO --------
     ["Consumo de drogas", "DELITO"],
@@ -43,49 +43,11 @@ DICCIONARIO_EMBEBIDO = pd.DataFrame([
     ["Estafas o defraudación", "DELITO"],
     ["Daños/Vandalismo", "DELITO"],
     ["Lesiones", "DELITO"],
-    ["Portación ilegal de arma", "DELITO"],
-    ["Tentativa de homicidio", "DELITO"],
-    ["Homicidio", "DELITO"],
-    ["Abigeato", "DELITO"],
-    ["Acoso sexual callejero", "DELITO"],
-    ["Allanamiento de morada", "DELITO"],
-    ["Amenazas", "DELITO"],
-    ["Apropiación indebida", "DELITO"],
-    ["Asociación ilícita", "DELITO"],
-    ["Asesinato", "DELITO"],
-    ["Contrabando", "DELITO"],
-    ["Corrupción de funcionario", "DELITO"],
-    ["Daños culposos", "DELITO"],
-    ["Delitos informáticos", "DELITO"],
-    ["Encubrimiento", "DELITO"],
-    ["Estafa electrónica", "DELITO"],
-    ["Extorsión", "DELITO"],
-    ["Falsificación de documentos", "DELITO"],
-    ["Femicidio", "DELITO"],
-    ["Fraude", "DELITO"],
-    ["Quebrantamiento de medidas", "DELITO"],
-    ["Rapiña", "DELITO"],
-    ["Resistencia a la autoridad", "DELITO"],
-    ["Robo agravado", "DELITO"],
-    ["Sustracción de menores", "DELITO"],
-    ["Tráfico de armas", "DELITO"],
-    ["Violencia intrafamiliar", "DELITO"],
-    ["Violencia de género", "DELITO"],
-
     # ---- RIESGO SOCIAL ----
     ["Falta de oportunidades laborales.", "RIESGO SOCIAL"],
     ["Falta de inversion social", "RIESGO SOCIAL"],
     ["Personas con exceso de tiempo de ocio", "RIESGO SOCIAL"],
     ["Problemas Vecinales.", "RIESGO SOCIAL"],
-    ["Ausentismo escolar", "RIESGO SOCIAL"],
-    ["Niñez y adolescencia en riesgo", "RIESGO SOCIAL"],
-    ["Población migrante vulnerable", "RIESGO SOCIAL"],
-    ["Población indígena en riesgo", "RIESGO SOCIAL"],
-    ["Adultos mayores en abandono", "RIESGO SOCIAL"],
-    ["Familias disfuncionales", "RIESGO SOCIAL"],
-    ["Consumo problemático en jóvenes", "RIESGO SOCIAL"],
-    ["Violencia escolar", "RIESGO SOCIAL"],
-
     # ---- OTROS FACTORES ----
     ["Consumo de alcohol en vía pública", "OTROS FACTORES"],
     ["Contaminacion Sonica", "OTROS FACTORES"],
@@ -94,18 +56,9 @@ DICCIONARIO_EMBEBIDO = pd.DataFrame([
     ["Falta de salubridad publica", "OTROS FACTORES"],
     ["Disturbios(Riñas)", "OTROS FACTORES"],
     ["Personas en situación de calle.", "OTROS FACTORES"],
-    ["Mercado municipal desordenado", "OTROS FACTORES"],
-    ["Paradas informales de autobús", "OTROS FACTORES"],
-    ["Iluminación pública deficiente", "OTROS FACTORES"],
-    ["Basura en vía pública", "OTROS FACTORES"],
-    ["Parques sin mantenimiento", "OTROS FACTORES"],
-    ["Grafitis y vandalismo menor", "OTROS FACTORES"],
-    ["Parqueos improvisados", "OTROS FACTORES"],
-    ["Venta ambulante desordenada", "OTROS FACTORES"],
-    ["Feria del agricultor sin control", "OTROS FACTORES"],
 ], columns=["Descriptor", "Categoría"]).assign(Categoría=lambda d: d["Categoría"].map(_force_cat))
 
-# ===================== Sinónimos / variaciones (opcional, amplialo si quieres) =========================
+# ===================== Sinónimos / variaciones =========================
 SINONIMOS: Dict[str, List[str]] = {
     # DELITO
     "Consumo de drogas": ["consumo de drogas", "consumen drogas", "consumo marihuana", "fumando piedra"],
@@ -167,6 +120,20 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def read_matriz(file_bytes: bytes) -> pd.DataFrame:
     return pd.read_excel(BytesIO(file_bytes), sheet_name="matriz", engine="openpyxl")
+
+# --- helpers para rango de columnas Excel (AI:ET) ---
+def excel_col_to_index(col: str) -> int:
+    """Convierte 'A'->1, 'Z'->26, 'AA'->27, ..., 'AI'->35, 'ET'->150 (1-based)."""
+    col = col.strip().upper()
+    n = 0
+    for ch in col:
+        n = n * 26 + (ord(ch) - ord('A') + 1)
+    return n
+
+AI_IDX_1B = excel_col_to_index("AI")   # 35 (1-based)
+ET_IDX_1B = excel_col_to_index("ET")   # 150 (1-based)
+AI_IDX = AI_IDX_1B - 1                 # 0-based para iloc
+ET_IDX = ET_IDX_1B - 1
 
 def build_regex_all(dic_df: pd.DataFrame) -> Dict[str, re.Pattern]:
     compiled = {}
@@ -327,7 +294,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
             ws.write_number(i+1, 9, 0.80)
 
         corte_row = max(1, cutoff_idx)
-        xcat = pareto.iloc[corte_row-1]["Descripcion"] if "Descripcion" in pareto.columns else pareto.iloc[corte_row-1]["Descriptor"]
+        xcat = pareto.iloc[corte_row-1]["Descriptor"]
         ws.write(1,10, xcat); ws.write(2,10, xcat)
         ws.write_number(1,11, 0.0); ws.write_number(2,11, 1.0)
 
@@ -343,7 +310,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
             'points': points,
         })
 
-        # Línea: % acumulado (eje secundario)
+        # Línea: % acumulado (eje secundario, 0–100%)
         line = wb.add_chart({'type': 'line'})
         line.add_series({
             'name': '% acumulado',
@@ -354,7 +321,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         })
         chart.combine(line)
 
-        # Línea horizontal 80%
+        # Línea horizontal 80% (eje secundario)
         h80 = wb.add_chart({'type': 'line'})
         h80.add_series({
             'name': '80/20',
@@ -365,7 +332,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         })
         chart.combine(h80)
 
-        # Línea vertical en el corte
+        # Línea vertical en el corte (eje secundario)
         vline = wb.add_chart({'type': 'line'})
         vline.add_series({
             'name': '',
@@ -382,7 +349,7 @@ def export_excel(pareto: pd.DataFrame, titulo: str = "PARETO COMUNIDAD") -> byte
         chart.set_chartarea({'border': {'none': True}})
         chart.set_x_axis({'num_font': {'rotation': -50}})
         chart.set_y_axis({'major_gridlines': {'visible': False}})
-        chart.set_y2_axis({'min': 0, 'max': 1, 'major_unit': 0.1, 'num_format': '0%'})
+        chart.set_y2_axis({'min': 0, 'max': 1, 'major_unit': 0.1, 'num_format': '0%'})  # 0–100%
         chart.set_legend({'position': 'bottom'})
         ws.insert_chart(1, 9, chart, {'x_scale': 1.9, 'y_scale': 1.6})
 
@@ -402,39 +369,59 @@ except Exception as e:
     st.error(f"Error leyendo 'matriz': {e}")
     st.stop()
 
-df = normalize_columns(df_raw)
-st.caption(f"Vista previa (primeras 20 de {len(df)} filas)")
-st.dataframe(df.head(20), use_container_width=True)
+df_all = normalize_columns(df_raw)
+st.caption(f"Vista previa (primeras 20 de {len(df_all)} filas)")
+st.dataframe(df_all.head(20), use_container_width=True)
 
-# --- Si la hoja trae DESCRIPTOR + FRECUENCIA, usamos tal cual ---
-cols_norm = {c: norm_text(c) for c in df.columns}
-inv = {v: k for k, v in cols_norm.items()}
+# ---------- Tomar SOLO columnas AI:ET para la detección ----------
+# (índices 0-based: AI=34, ET=149)
+def excel_col_to_index(col: str) -> int:
+    col = col.strip().upper()
+    n = 0
+    for ch in col:
+        n = n * 26 + (ord(ch) - ord('A') + 1)
+    return n
 
-desc_candidates = [col for col, n in cols_norm.items()
+AI_IDX = excel_col_to_index("AI") - 1   # 35 -> 34 (0-based)
+ET_IDX = excel_col_to_index("ET") - 1   # 150 -> 149 (0-based)
+ncols = df_all.shape[1]
+L = max(0, min(AI_IDX, ncols-1))
+R = max(0, min(ET_IDX, ncols-1))
+if L > R:
+    L, R = 0, ncols-1  # fallback si la hoja tiene menos columnas
+
+df_range = df_all.iloc[:, L:R+1].copy()
+df_range = normalize_columns(df_range)   # normalizo nombres dentro del rango
+
+# --- Si la hoja trae DESCRIPTOR + FRECUENCIA (en cualquier parte), usamos tal cual ---
+cols_norm_all = {c: norm_text(c) for c in df_all.columns}
+inv_all = {v: k for k, v in cols_norm_all.items()}
+
+desc_candidates = [col for col, n in cols_norm_all.items()
                    if any(t in n for t in ["descriptor", "problema", "descriptor actualizado", "descripcion"])]
 
-freq_col = next((inv[x] for x in ["frecuencia"] if x in inv), None)
+freq_col = next((inv_all[x] for x in ["frecuencia"] if x in inv_all), None)
 
 if freq_col and desc_candidates:
-    base = df[[desc_candidates[0], freq_col]].copy()
+    base = df_all[[desc_candidates[0], freq_col]].copy()
     base.columns = ["Descriptor", "Frecuencia"]
     base["Frecuencia"] = pd.to_numeric(base["Frecuencia"], errors="coerce").fillna(0).astype(int)
     base = base.groupby("Descriptor", as_index=False)["Frecuencia"].sum()
 else:
+    # Fallback: detectar SOLO usando columnas AI:ET
     regex = build_regex_all(DICCIONARIO_EMBEBIDO)
-    counts_h = detect_by_headers(df, regex)
-    counts_t = detect_in_text(df, regex)
+    counts_h = detect_by_headers(df_range, regex)
+    counts_t = detect_in_text(df_range, regex)
     base = build_copilado_from_counts(counts_h, counts_t)
 
 if base.empty or base["Frecuencia"].sum() == 0:
-    st.warning("No se detectaron descriptores o las frecuencias son 0. Revisá la plantilla.")
+    st.warning("No se detectaron descriptores o las frecuencias son 0. Revisá el rango AI:ET y la plantilla.")
     st.stop()
 
 pareto = build_pareto(base, DICCIONARIO_EMBEBIDO)
 
 # ---------- FORMATO DE PORCENTAJES EN PANTALLA (4,66%) ----------
 def pct_str(frac: float) -> str:
-    # convierte 0.0466 -> "4,66%"
     s = f"{frac*100:.2f}%"
     return s.replace(".", ",")
 
@@ -455,10 +442,12 @@ bars = alt.Chart(top_df).mark_bar().encode(
 )
 line = alt.Chart(top_df).mark_line(point=True).encode(
     x='Descriptor:N',
-    y=alt.Y('% acumulado:Q', axis=alt.Axis(format='%'), scale=alt.Scale(domain=[0,1])),
+    y=alt.Y('% acumulado:Q', axis=alt.Axis(format='%'), scale=alt.Scale(domain=[0,1])),  # 0–100%
     color=alt.value('#ED7D31')
 )
-h80 = alt.Chart(pd.DataFrame({'y':[0.8]})).mark_rule().encode(y=alt.Y('y:Q', axis=alt.Axis(format='%')))
+h80 = alt.Chart(pd.DataFrame({'y':[0.8]})).mark_rule().encode(
+    y=alt.Y('y:Q', axis=alt.Axis(format='%'))
+)
 st.altair_chart((bars + line + h80).resolve_scale(y='independent'), use_container_width=True)
 
 # ========= Descargar Excel definitivo =========
