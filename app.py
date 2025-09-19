@@ -334,7 +334,7 @@ if "freq_map" not in st.session_state:
     st.session_state.freq_map = {}  # {descriptor: frecuencia}
 
 st.title("Pareto de Descriptores")
-st.caption("Gráfico con 80/20 real. En tabla/Excel la columna 'segmento' muestra 80% para todas las filas (presentación).")
+
 
 titulo = st.text_input("Título del Pareto (opcional)", value="Pareto Comunidad")
 
@@ -408,6 +408,7 @@ if seleccion:
         )
 else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
+
 
 
 
