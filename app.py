@@ -395,12 +395,6 @@ if seleccion:
     st.subheader("4) Exportar")
     if not tabla.empty:
         st.download_button(
-            "⬇️ Descargar CSV",
-            data=mostrar.to_csv(index=False).encode("utf-8"),
-            file_name="pareto_descriptores.csv",
-            mime="text/csv",
-        )
-        st.download_button(
             "⬇️ Descargar Excel con gráfico",
             data=exportar_excel_con_grafico(tabla, titulo),
             file_name="pareto_descriptores.xlsx",
@@ -408,6 +402,7 @@ if seleccion:
         )
 else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
+
 
 
 
