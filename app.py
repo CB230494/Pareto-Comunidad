@@ -1,6 +1,6 @@
 # app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (sin imágenes externas)
 # ---------------------------------------------------------------------------------
-# Requisitos recomendados (requirements.txt):
+# Requisitos (requirements.txt):
 #   streamlit
 #   pandas
 #   numpy
@@ -355,7 +355,8 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         chart.set_y_axis({"name": "Frecuencia"})
         chart.set_y2_axis({"name": "Porcentaje acumulado",
                            "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
-        chart.set_title({"name": titulo si := titulo.strip() if titulo else "" or "Diagrama de Pareto"})
+        title_text = titulo.strip() if titulo else ""
+        chart.set_title({"name": title_text or "Diagrama de Pareto"})  # <<< FIX
         chart.set_legend({"position": "bottom"}); chart.set_size({"width": 1180, "height": 420})
         ws.insert_chart("I2", chart)
     return output.getvalue()
@@ -433,7 +434,7 @@ if st.session_state.get("reset_after_save", False):
     st.session_state["reset_after_save"] = False
 
 # ============================================================================
-# 5) PDF (LEGIBLE) — Platypus (sin imágenes externas)  *** PORTADA CORREGIDA ***
+# 5) PDF (LEGIBLE) — Platypus (sin imágenes externas) — PORTADA CORREGIDA
 # ============================================================================
 PAGE_W, PAGE_H = A4
 
@@ -448,8 +449,8 @@ def _styles():
         leading=16, textColor=GRIS, alignment=1, spaceAfter=10
     ))
     ss.add(ParagraphStyle(
-        name="CoverDate", parent=ss["Normal"], fontSize=12.5,
-        leading=16, textColor=TEXTO, alignment=0, spaceBefore=8
+        name="CoverDate", parent=ss["Normal"], fontSize=14,
+        leading=18, textColor=TEXTO, alignment=0, spaceBefore=8
     ))
     ss.add(ParagraphStyle(
         name="TitleBig", parent=ss["Title"], fontSize=24,
@@ -635,7 +636,7 @@ def generar_pdf_informe(nombre_informe: str,
     ), Spacer(1, 0.3*cm)]
     story.append(_tabla_resultados_flowable(df_par, doc.width))
 
-    # (Se elimina 'Descripción por descriptor')
+    # (Sin 'Descripción por descriptor')
 
     if desgloses:
         story += [PageBreak()]
@@ -896,8 +897,7 @@ else:
         maps_a_unir = [st.session_state["portafolio"][n] for n in nombres]
         titulo_unif = "Pareto General (todos los paretos)"
     elif len(st.session_state.get("sel_unif", [])) >= 2:
-        # <<< CORRECCIÓN AQUÍ: 'in' en lugar de 'en' >>>
-        maps_a_unir = [st.session_state["portafolio"][n] for n in st.session_state["sel_unif"]]
+        maps_a_unir = [st.session_state["portafolio"][n] for n in st.session_state["sel_unif"]]  # FIX 'in'
         titulo_unif = f"Unificado: {', '.join(st.session_state['sel_unif'])}"
     if maps_a_unir:
         combinado = combinar_maps(maps_a_unir)
