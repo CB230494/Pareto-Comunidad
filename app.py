@@ -1,12 +1,13 @@
-# app.py — Pareto con gráfico 80/20 real + Portafolio + Unificado + Sheets DB (fixes)
-# -----------------------------------------------------------------------------------
+# app.py — Pareto 80/20 + Portafolio + Unificado + Google Sheets + Informe PDF (verde/azul)
+# -----------------------------------------------------------------------------------------
 # Requisitos:
-#   pip install streamlit pandas matplotlib xlsxwriter gspread google-auth
+#   pip install -r requirements.txt
 #   streamlit run app.py
-# -----------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------------------
 
 import io
-from typing import List, Dict
+import os
+from typing import List, Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -17,15 +18,37 @@ import matplotlib.pyplot as plt
 import gspread
 from google.oauth2.service_account import Credentials
 
-# URL de tu hoja (DB)
+# ====== PDF ======
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib.utils import ImageReader
+from reportlab.lib import colors
+from PIL import Image
+
+# ----------------- CONFIG -----------------
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1cf-avzRjtBXcqr69WfrrsTAegm0PMAe8LgjeLpfcS5g/edit?usp=sharing"
 WS_PARETOS = "paretos"  # hoja donde se guardan los paretos (nombre, descriptor, frecuencia)
 
 st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 
-# ============================================================================
+# Paleta (verde/azul)
+VERDE = "#1B9E77"
+AZUL  = "#2C7FB8"
+VERDE_CLARO = "#A6D96A"
+AZUL_CLARO  = "#B3CDE3"
+NARANJA = "#FF8C00"  # para resalte opcional en Excel
+SKY     = "#87CEEB"  # compat previo
+NEGRO   = "#000000"
+
+# Íconos/portadas esperados en el directorio de la app (usa los que subiste al repo)
+IMG_ICONO_PEQUENO     = "Iconos pequeños.png"         # esquina sup-izq en páginas intermedias
+IMG_PORTADA_GRANDE    = "Icono grande portada.png"    # portada
+IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # portada (si falta el grande)
+
+# ==========================================
 # 1) CATÁLOGO EMBEBIDO
-# ============================================================================
+# ==========================================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
     {"categoria": "Delito", "descriptor": "Abigeato (robo y destace de ganado)"},
@@ -195,98 +218,10 @@ CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Robo de ganado y agrícola"},
     {"categoria": "Delito", "descriptor": "Robo de equipo agrícola"},
 ]
-# ============================================================================
+
+# ==========================================
 # 2) UTILIDADES BASE
-# ============================================================================
-ORANGE = "#FF8C00"
-SKY    = "#87CEEB"
-
-def calcular_pareto(df_in: pd.DataFrame) -> pd.DataFrame:
-    df = df_in.copy()
-    df["frecuencia"] = pd.to_numeric(df["frecuencia"], errors="coerce").fillna(0).astype(int)
-    df = df[df["frecuencia"] > 0]
-    if df.empty:
-        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0,
-                         segmento_real="20%", segmento="80%")
-    df = df.sort_values("frecuencia", ascending=False)
-    total = int(df["frecuencia"].sum())
-    df["porcentaje"] = (df["frecuencia"] / total * 100).round(2)
-    df["acumulado"]  = df["frecuencia"].cumsum()
-    df["pct_acum"]   = (df["acumulado"] / total * 100).round(2)
-    df["segmento_real"] = np.where(df["pct_acum"] <= 80.00, "80%", "20%")
-    df["segmento"] = "80%"
-    return df.reset_index(drop=True)
-
-def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
-    if df_par.empty:
-        st.info("Ingresa frecuencias (>0) para ver el gráfico.")
-        return
-    x        = np.arange(len(df_par))
-    freqs    = df_par["frecuencia"].to_numpy()
-    pct_acum = df_par["pct_acum"].to_numpy()
-    colors   = [ORANGE if seg == "80%" else SKY for seg in df_par["segmento_real"]]
-    fig, ax1 = plt.subplots(figsize=(14, 5))
-    ax1.bar(x, freqs, color=colors)
-    ax1.set_ylabel("Frecuencia")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(df_par["descriptor"].tolist(), rotation=75, ha="right")
-    ax1.set_title(titulo if titulo.strip() else "Pareto — Frecuencia y % acumulado")
-    ax2 = ax1.twinx()
-    ax2.plot(x, pct_acum, marker="o")
-    ax2.set_ylabel("% acumulado")
-    ax2.set_ylim(0, 110)
-    if (df_par["segmento_real"] == "80%").any():
-        cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
-        ax1.axvline(cut_idx, linestyle=":", color="k")
-    ax2.axhline(80, linestyle="--")
-    st.pyplot(fig)
-
-def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        hoja = "Pareto"
-        df_x = df_par.copy()
-        df_x["porcentaje"] = (df_x["porcentaje"] / 100.0).round(4)
-        df_x["pct_acum"]   = (df_x["pct_acum"] / 100.0).round(4)
-        df_x = df_x[["categoria", "descriptor", "frecuencia",
-                     "porcentaje", "pct_acum", "acumulado", "segmento"]]
-        df_x.to_excel(writer, sheet_name=hoja, index=False, startrow=0, startcol=0)
-        wb = writer.book; ws = writer.sheets[hoja]
-        pct_fmt = wb.add_format({"num_format": "0.00%"})
-        total_fmt = wb.add_format({"bold": True})
-        ws.set_column("A:A", 18); ws.set_column("B:B", 55); ws.set_column("C:C", 12)
-        ws.set_column("D:D", 12, pct_fmt); ws.set_column("E:E", 18, pct_fmt)
-        ws.set_column("F:F", 12); ws.set_column("G:G", 10)
-        n = len(df_x)
-        cats = f"=Pareto!$B$2:$B${n+1}"; vals = f"=Pareto!$C$2:$C${n+1}"; pcts = f"=Pareto!$E$2:$E${n+1}"
-        total = int(df_par["frecuencia"].sum())
-        ws.write(n + 2, 1, "TOTAL:", total_fmt); ws.write(n + 2, 2, total, total_fmt)
-        try:
-            idxs = np.where(df_par["segmento_real"].to_numpy() == "80%")[0]
-            if len(idxs) > 0:
-                last = int(idxs.max())
-                orange_bg = wb.add_format({"bg_color": ORANGE, "font_color": "#000000"})
-                ws.conditional_format(1, 0, 1 + last, 6, {"type": "no_blanks", "format": orange_bg})
-        except Exception:
-            pass
-        chart = wb.add_chart({"type": "column"})
-        points = [{"fill": {"color": (ORANGE if s == "80%" else SKY)}} for s in df_par["segmento_real"]]
-        chart.add_series({"name": "Frecuencia", "categories": cats, "values": vals, "points": points})
-        line = wb.add_chart({"type": "line"})
-        line.add_series({"name": "% acumulado", "categories": cats, "values": pcts,
-                         "y2_axis": True, "marker": {"type": "circle"}})
-        chart.combine(line)
-        chart.set_y_axis({"name": "Frecuencia"})
-        chart.set_y2_axis({"name": "Porcentaje acumulado",
-                           "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
-        chart.set_title({"name": titulo if titulo.strip() else "PARETO – Frecuencia y % acumulado"})
-        chart.set_legend({"position": "bottom"}); chart.set_size({"width": 1180, "height": 420})
-        ws.insert_chart("I2", chart)
-    return output.getvalue()
-
-# ============================================================================
-# 3) UTILIDADES DE PORTAFOLIO
-# ============================================================================
+# ==========================================
 def _map_descriptor_a_categoria() -> Dict[str, str]:
     df = pd.DataFrame(CATALOGO); return dict(zip(df["descriptor"], df["categoria"]))
 DESC2CAT = _map_descriptor_a_categoria()
@@ -319,9 +254,99 @@ def combinar_maps(maps: List[Dict[str, int]]) -> Dict[str, int]:
 def info_pareto(freq_map: Dict[str, int]) -> Dict[str, int]:
     d = normalizar_freq_map(freq_map); return {"descriptores": len(d), "total": int(sum(d.values()))}
 
-# ============================================================================
-# 4) GOOGLE SHEETS HELPERS
-# ============================================================================
+# --- Cálculo Pareto ---
+def calcular_pareto(df_in: pd.DataFrame) -> pd.DataFrame:
+    df = df_in.copy()
+    df["frecuencia"] = pd.to_numeric(df["frecuencia"], errors="coerce").fillna(0).astype(int)
+    df = df[df["frecuencia"] > 0]
+    if df.empty:
+        return df.assign(porcentaje=0.0, acumulado=0, pct_acum=0.0,
+                         segmento_real="20%", segmento="80%")
+    df = df.sort_values("frecuencia", ascending=False)
+    total = int(df["frecuencia"].sum())
+    df["porcentaje"] = (df["frecuencia"] / total * 100).round(2)
+    df["acumulado"]  = df["frecuencia"].cumsum()
+    df["pct_acum"]   = (df["acumulado"] / total * 100).round(2)
+    df["segmento_real"] = np.where(df["pct_acum"] <= 80.00, "80%", "20%")
+    df["segmento"] = "80%"
+    return df.reset_index(drop=True)
+
+def _colors_for_segments(segments: List[str]) -> List[str]:
+    return [VERDE if s == "80%" else AZUL for s in segments]
+
+def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
+    if df_par.empty:
+        st.info("Ingresa frecuencias (>0) para ver el gráfico.")
+        return
+    x        = np.arange(len(df_par))
+    freqs    = df_par["frecuencia"].to_numpy()
+    pct_acum = df_par["pct_acum"].to_numpy()
+    colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
+
+    fig, ax1 = plt.subplots(figsize=(14, 5))
+    ax1.bar(x, freqs, color=colors_b)
+    ax1.set_ylabel("Frecuencia")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(df_par["descriptor"].tolist(), rotation=75, ha="right")
+    ax1.set_title(titulo if titulo.strip() else "Pareto — Frecuencia y % acumulado", color="#124559")
+    ax2 = ax1.twinx()
+    ax2.plot(x, pct_acum, marker="o", linewidth=2)
+    ax2.set_ylabel("% acumulado")
+    ax2.set_ylim(0, 110)
+    if (df_par["segmento_real"] == "80%").any():
+        cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
+        ax1.axvline(cut_idx, linestyle=":", color="k")
+    ax2.axhline(80, linestyle="--", linewidth=1)
+    st.pyplot(fig)
+
+# --- Excel export (se mantiene) ---
+def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
+    import xlsxwriter  # aseguramos motor
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        hoja = "Pareto"
+        df_x = df_par.copy()
+        df_x["porcentaje"] = (df_x["porcentaje"] / 100.0).round(4)
+        df_x["pct_acum"]   = (df_x["pct_acum"] / 100.0).round(4)
+        df_x = df_x[["categoria", "descriptor", "frecuencia",
+                     "porcentaje", "pct_acum", "acumulado", "segmento"]]
+        df_x.to_excel(writer, sheet_name=hoja, index=False, startrow=0, startcol=0)
+        wb = writer.book; ws = writer.sheets[hoja]
+        pct_fmt = wb.add_format({"num_format": "0.00%"})
+        total_fmt = wb.add_format({"bold": True})
+        ws.set_column("A:A", 18); ws.set_column("B:B", 55); ws.set_column("C:C", 12)
+        ws.set_column("D:D", 12, pct_fmt); ws.set_column("E:E", 18, pct_fmt)
+        ws.set_column("F:F", 12); ws.set_column("G:G", 10)
+        n = len(df_x)
+        cats = f"=Pareto!$B$2:$B${n+1}"; vals = f"=Pareto!$C$2:$C${n+1}"; pcts = f"=Pareto!$E$2:$E${n+1}"
+        total = int(df_par["frecuencia"].sum())
+        ws.write(n + 2, 1, "TOTAL:", total_fmt); ws.write(n + 2, 2, total, total_fmt)
+        try:
+            idxs = np.where(df_par["segmento_real"].to_numpy() == "80%")[0]
+            if len(idxs) > 0:
+                last = int(idxs.max())
+                green_bg = wb.add_format({"bg_color": VERDE, "font_color": "#FFFFFF"})
+                ws.conditional_format(1, 0, 1 + last, 6, {"type": "no_blanks", "format": green_bg})
+        except Exception:
+            pass
+        chart = wb.add_chart({"type": "column"})
+        points = [{"fill": {"color": (VERDE if s == "80%" else AZUL)}} for s in df_par["segmento_real"]]
+        chart.add_series({"name": "Frecuencia", "categories": cats, "values": vals, "points": points})
+        line = wb.add_chart({"type": "line"})
+        line.add_series({"name": "% acumulado", "categories": cats, "values": pcts,
+                         "y2_axis": True, "marker": {"type": "circle"}})
+        chart.combine(line)
+        chart.set_y_axis({"name": "Frecuencia"})
+        chart.set_y2_axis({"name": "Porcentaje acumulado",
+                           "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
+        chart.set_title({"name": titulo if titulo.strip() else "PARETO – Frecuencia y % acumulado"})
+        chart.set_legend({"position": "bottom"}); chart.set_size({"width": 1180, "height": 420})
+        ws.insert_chart("I2", chart)
+    return output.getvalue()
+
+# ==========================================
+# 3) GOOGLE SHEETS HELPERS
+# ==========================================
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
 
 def _gc():
@@ -372,29 +397,195 @@ def sheets_guardar_pareto(nombre: str, freq_map: Dict[str, int], sobrescribir: b
         if others: ws.append_rows(others, value_input_option="RAW")
     rows_new = [[nombre, d, int(f)] for d, f in normalizar_freq_map(freq_map).items()]
     if rows_new: ws.append_rows(rows_new, value_input_option="RAW")
-# ============================================================================
-# 5) ESTADO DE SESIÓN (con flag de reseteo)
-# ============================================================================
+
+# ==========================================
+# 4) ESTADO DE SESIÓN
+# ==========================================
 st.session_state.setdefault("freq_map", {})
 st.session_state.setdefault("portafolio", {})
 st.session_state.setdefault("msel", [])
 st.session_state.setdefault("reset_after_save", False)
 
-# Cargar portafolio desde Sheets una vez si está vacío
 if not st.session_state["portafolio"]:
     loaded = sheets_cargar_portafolio()
     if loaded: st.session_state["portafolio"].update(loaded)
 
-# ---- APLICAR RESET ANTES DE DIBUJAR WIDGETS ----
 if st.session_state.get("reset_after_save", False):
     st.session_state["freq_map"] = {}
     st.session_state["msel"] = []
     st.session_state.pop("editor_freq", None)
     st.session_state["reset_after_save"] = False
 
-# ============================================================================
-# 6) UI PRINCIPAL
-# ============================================================================
+# ==========================================
+# 5) MAPA DE IMÁGENES POR DESCRIPTOR
+# ==========================================
+# Simple match por palabras clave (ajústalo/expándelo cuando agregues más imágenes)
+IMG_BY_KEYWORD = {
+    "búnker": "Bunker.png",
+    "bunker": "Bunker.png",
+    "consumo de drogas": "Consumo de drogas.png",
+    "deficiencia en la infraestructura vial": "Deficiencia en la infraestructura Vial.png",
+    "estafa": "Estafa o defraudacion.png",
+    "falta de inversión social": "Falta de Inversion social.png",
+    "venta de drogas": "Venta de drogas.png",
+    "violencia intrafamiliar": "Violencia intrafamiliar.png",
+}
+
+def _find_image_for_descriptor(descriptor: str) -> str | None:
+    dnorm = descriptor.lower()
+    for k, fname in IMG_BY_KEYWORD.items():
+        if k in dnorm and os.path.exists(fname):
+            return fname
+    return None
+
+def _safe_image_reader(path: str | None) -> ImageReader | None:
+    try:
+        if path and os.path.exists(path):
+            return ImageReader(path)
+    except Exception:
+        return None
+    return None
+
+# ==========================================
+# 6) PDF BUILDER
+# ==========================================
+PAGE_W, PAGE_H = A4
+
+def _draw_header_icon_if_needed(c: canvas.Canvas, is_first: bool, is_last: bool):
+    if is_first or is_last:
+        return
+    ir = _safe_image_reader(IMG_ICONO_PEQUENO)
+    if ir:
+        # esquina sup-izq (margen 1.2cm)
+        c.drawImage(ir, 1.2*cm, PAGE_H - 2.4*cm, width=1.1*cm, height=1.1*cm, mask='auto')
+
+def _title_portada(c: canvas.Canvas, titulo: str):
+    c.setFillColor(colors.HexColor("#124559"))
+    # Portada con imagen grande/mediana
+    ir = _safe_image_reader(IMG_PORTADA_GRANDE) or _safe_image_reader(IMG_PORTADA_MEDIANO)
+    if ir:
+        # imagen centrada arriba
+        iw, ih = ir.getSize()
+        ratio = (8*cm) / max(iw, ih)
+        w = iw*ratio; h = ih*ratio
+        c.drawImage(ir, (PAGE_W - w)/2, PAGE_H - h - 4*cm, width=w, height=h, mask='auto')
+    c.setFont("Helvetica-Bold", 24)
+    c.drawCentredString(PAGE_W/2, PAGE_H - 12*cm, titulo)
+    c.setFont("Helvetica", 12)
+    c.setFillColor(colors.black)
+    c.drawCentredString(PAGE_W/2, PAGE_H - 13.3*cm, "Estrategia Integral de Prevención — Sembremos Seguridad")
+    c.showPage()
+
+def _table_results_image(df: pd.DataFrame, titulo: str) -> bytes:
+    # Renderiza la tabla “Resultados” como imagen (para embeber en PDF fácil)
+    fig, ax = plt.subplots(figsize=(8.4, 6.2))
+    ax.axis('off')
+    show = df.copy()
+    show = show[["categoria","descriptor","frecuencia"]].rename(columns={
+        "categoria":"Categoría","descriptor":"Descriptor","frecuencia":"Frecuencia"
+    })
+    the_table = ax.table(cellText=show.values, colLabels=show.columns, loc='center')
+    the_table.auto_set_font_size(False); the_table.set_fontsize(9)
+    the_table.scale(1, 1.2)
+    ax.set_title("Resultados", pad=18, color="#124559")
+    buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="PNG", dpi=200); plt.close(fig)
+    return buf.getvalue()
+
+def _pareto_fig_image(df_par: pd.DataFrame, titulo: str) -> bytes:
+    # Mismo estilo que en pantalla
+    x        = np.arange(len(df_par))
+    freqs    = df_par["frecuencia"].to_numpy()
+    pct_acum = df_par["pct_acum"].to_numpy()
+    colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
+    fig, ax1 = plt.subplots(figsize=(10, 4))
+    ax1.bar(x, freqs, color=colors_b)
+    ax1.set_ylabel("Frecuencia")
+    ax1.set_xticks(x); ax1.set_xticklabels(df_par["descriptor"].tolist(), rotation=75, ha="right", fontsize=8)
+    ax1.set_title(titulo if titulo.strip() else "Pareto — Frecuencia y % acumulado", color="#124559")
+    ax2 = ax1.twinx()
+    ax2.plot(x, pct_acum, marker="o", linewidth=2)
+    ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
+    if (df_par["segmento_real"] == "80%").any():
+        cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
+        ax1.axvline(cut_idx, linestyle=":", color="k")
+    ax2.axhline(80, linestyle="--", linewidth=1)
+    buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="PNG", dpi=200); plt.close(fig)
+    return buf.getvalue()
+
+def _pie_image_from_breakdown(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
+    # data_pairs: [(label, pct), ...] (suma aprox 100)
+    labels = [l for l, _ in data_pairs if l]
+    sizes  = [float(p or 0) for _, p in data_pairs if _]
+    if not labels or sum(sizes) <= 0:
+        labels, sizes = ["Sin datos"], [100]
+    fig, ax = plt.subplots(figsize=(7.5, 5))
+    wedges, _ = ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
+    ax.axis('equal'); ax.set_title(title, color="#124559")
+    buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="PNG", dpi=200); plt.close(fig)
+    return buf.getvalue()
+
+def generar_pdf_informe(nombre_informe: str,
+                        df_par: pd.DataFrame,
+                        desgloses: List[Dict]) -> bytes:
+    """
+    desgloses: lista de secciones. Cada dict:
+        {"descriptor": str, "pares": List[Tuple[label, porcentaje]]}
+    """
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+
+    # 1) Portada
+    _title_portada(c, nombre_informe)
+
+    # 2) Resultados (tabla) + imagen de descriptor (si aplica) + diagrama pareto
+    _draw_header_icon_if_needed(c, is_first=False, is_last=False)
+    # Imagen asociada al TOP 1 si existe
+    top_img = _find_image_for_descriptor(df_par.iloc[0]["descriptor"]) if not df_par.empty else None
+    if top_img:
+        ir = _safe_image_reader(top_img)
+    else:
+        ir = None
+
+    # Tabla de resultados a PNG e inserción
+    tbl_png = _table_results_image(df_par, "Resultados")
+    c.drawImage(ImageReader(io.BytesIO(tbl_png)), 1.5*cm, 8.0*cm, width=18*cm-3*cm, height=11*cm, mask='auto')
+    if ir:
+        c.drawImage(ir, PAGE_W-6.5*cm, PAGE_H-7.5*cm, width=5.5*cm, height=5.5*cm, mask='auto')
+
+    c.showPage()
+
+    # 3) Página con Diagrama de Pareto
+    _draw_header_icon_if_needed(c, is_first=False, is_last=False)
+    pareto_png = _pareto_fig_image(df_par, "Diagrama de Pareto")
+    c.drawImage(ImageReader(io.BytesIO(pareto_png)), 1.5*cm, 5.5*cm, width=18*cm-3*cm, height=11*cm, mask='auto')
+    c.showPage()
+
+    # 4) Secciones de “Modalidades” (una página por desglose)
+    for idx, sec in enumerate(desgloses):
+        _draw_header_icon_if_needed(c, is_first=False, is_last=False)
+        descriptor = sec.get("descriptor","").strip()
+        pares = [(p.get("Etiqueta",""), float(p.get("%", 0) or 0)) for p in sec.get("rows", [])]
+        # título + imagen asociada al descriptor
+        c.setFont("Helvetica-Bold", 16); c.setFillColor(colors.HexColor("#124559"))
+        c.drawString(2*cm, PAGE_H - 3*cm, f"Modalidades de la problemática — {descriptor}")
+        dimg = _safe_image_reader(_find_image_for_descriptor(descriptor))
+        if dimg:
+            c.drawImage(dimg, PAGE_W-6.0*cm, PAGE_H-6.5*cm, width=4.8*cm, height=4.8*cm, mask='auto')
+        pie_png = _pie_image_from_breakdown(descriptor, pares)
+        c.drawImage(ImageReader(io.BytesIO(pie_png)), 2*cm, 4.0*cm, width=16*cm, height=11*cm, mask='auto')
+        c.showPage()
+
+    # 5) Cierre (última página sin icono)
+    c.setFont("Helvetica-Bold", 18); c.setFillColor(colors.HexColor("#124559"))
+    c.drawCentredString(PAGE_W/2, PAGE_H - 6*cm, "Sembremos Seguridad – Resultados")
+    c.setFont("Helvetica", 11); c.setFillColor(colors.black)
+    c.drawCentredString(PAGE_W/2, PAGE_H - 7.2*cm, "Dirección de Programas Policiales Preventivos – MSP")
+    c.save()
+    return buf.getvalue()
+
+# ==========================================
+# 7) UI PRINCIPAL (Editor Pareto)
+# ==========================================
 st.title("Pareto de Descriptores")
 
 c_t1, c_t2, c_t3 = st.columns([2,1,1])
@@ -465,7 +656,6 @@ if seleccion:
                     st.success(f"Pareto '{nombre}' guardado en Google Sheets y en la sesión.")
                 except Exception as e:
                     st.warning(f"Se guardó en la sesión, pero hubo un problema con Sheets: {e}")
-                # Activar flag de reseteo y re-ejecutar
                 st.session_state["reset_after_save"] = True
                 st.rerun()
     with col_g2:
@@ -476,11 +666,69 @@ if seleccion:
                 file_name=f"pareto_{(nombre_para_guardar or 'edicion').lower().replace(' ','_')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+
+    # ==========================================================
+    # 5) Elaborador de INFORME PDF (formulario de desgloses)
+    # ==========================================================
+    st.markdown("---")
+    st.header("🧾 Elaborar Informe PDF")
+
+    nombre_informe = st.text_input(
+        "Nombre del informe (portada)", 
+        value=(nombre_para_guardar.strip() or "Pareto Comunidad")
+    )
+
+    st.caption("Opcional: agrega secciones de ‘Modalidades’ (hasta 3). Cada sección admite hasta 10 filas (Etiqueta + %).")
+
+    # definimos cuántas secciones quiere
+    n_secs = st.number_input("Cantidad de secciones de Modalidades", min_value=0, max_value=3, value=1, step=1)
+
+    desgloses = []
+    candidatos = tabla["descriptor"].tolist() if not tabla.empty else []
+    for i in range(n_secs):
+        with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
+            dsel = st.selectbox(f"Descriptor para la sección #{i+1}", options=["(elegir)"] + candidatos, index=0, key=f"sec_desc_{i}")
+            # tabla para hasta 10 filas
+            rows = [{"Etiqueta":"", "%":0.0} for _ in range(10)]
+            df_rows = pd.DataFrame(rows)
+            de = st.data_editor(
+                df_rows, key=f"sec_rows_{i}", use_container_width=True,
+                column_config={
+                    "Etiqueta": st.column_config.TextColumn("Etiqueta / Modalidad", width="large"),
+                    "%": st.column_config.NumberColumn("Porcentaje", min_value=0.0, max_value=100.0, step=0.1)
+                },
+                num_rows="fixed"
+            )
+            total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
+            st.caption(f"Suma actual: **{total_pct:.1f}%** (se recomienda ~100%)")
+            if dsel != "(elegir)":
+                desgloses.append({"descriptor": dsel, "rows": de.to_dict(orient="records")})
+
+    col_inf1, col_inf2 = st.columns([1,3])
+    with col_inf1:
+        gen = st.button("📄 Generar Informe PDF", type="primary", use_container_width=True)
+    with col_inf2:
+        st.caption("El PDF incluirá: Portada, Resultados, Diagrama de Pareto y cada sección de Modalidades en páginas separadas. Ícono pequeño se muestra en páginas intermedias.")
+
+    if gen:
+        if tabla.empty:
+            st.warning("No hay datos para el informe. Asigna frecuencias primero.")
+        else:
+            pdf_bytes = generar_pdf_informe(nombre_informe, tabla, desgloses)
+            st.success("Informe generado.")
+            st.download_button(
+                "⬇️ Descargar Informe PDF",
+                data=pdf_bytes,
+                file_name=f"informe_{nombre_informe.lower().replace(' ','_')}.pdf",
+                mime="application/pdf",
+            )
+
 else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
-# ============================================================================
-# 7) PORTAFOLIO, UNIFICADO Y DESCARGAS
-# ============================================================================
+
+# ==========================================
+# 8) PORTAFOLIO, UNIFICADO Y DESCARGAS
+# ==========================================
 st.markdown("---")
 st.header("📁 Portafolio de Paretos (guardados)")
 
@@ -577,6 +825,8 @@ else:
             )
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS'.")
+
+
 
 
 
