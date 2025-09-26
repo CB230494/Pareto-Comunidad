@@ -942,4 +942,3 @@ else:
             )
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
-
