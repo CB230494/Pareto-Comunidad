@@ -1,4 +1,4 @@
-# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (mejorado)
+# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (v2, portada/narrativa/encabezados)
 # ---------------------------------------------------------------------------------
 # Instalar:
 #   pip install -r requirements.txt
@@ -44,10 +44,10 @@ AZUL  = "#2C7FB8"
 TEXTO = "#124559"
 GRIS  = "#6B7280"
 
-# Íconos/portadas esperados (exactamente estos nombres, junto a app.py)
-IMG_ICONO_PEQUENO     = "Iconos pequeños.png"         # esquina sup-izq en páginas intermedias
-IMG_PORTADA_GRANDE    = "Icono grande portada.png"    # portada
-IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # portada (fallback)
+# Íconos/portadas
+IMG_ICONO_PEQUENO     = "Iconos pequeños.png"         # esquina superior izquierda (páginas intermedias)
+IMG_PORTADA_GRANDE    = "Icono grande portada.png"    # portada grande
+IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # fallback
 
 # ============== AJUSTES MATPLOTLIB (legibilidad) ==============
 plt.rcParams.update({
@@ -62,7 +62,7 @@ plt.rcParams.update({
 })
 
 # ============================================================================
-# 1) CATÁLOGO EMBEBIDO  (…lista completa idéntica…)
+# 1) CATÁLOGO EMBEBIDO  (lista completa)
 # ============================================================================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
@@ -310,7 +310,7 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
     ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=0, ha="right")
-    ax1.set_title(titulo if titulo.strip() else "Pareto — Frecuencia y % acumulado", color=TEXTO)
+    ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
     ax2 = ax1.twinx()
     ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
     ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
@@ -351,7 +351,7 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         chart.set_y_axis({"name": "Frecuencia"})
         chart.set_y2_axis({"name": "Porcentaje acumulado",
                            "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
-        chart.set_title({"name": titulo if titulo.strip() else "PARETO – Frecuencia y % acumulado"})
+        chart.set_title({"name": titulo if titulo.strip() else "Diagrama de Pareto"})
         chart.set_legend({"position": "bottom"}); chart.set_size({"width": 1180, "height": 420})
         ws.insert_chart("I2", chart)
     return output.getvalue()
@@ -466,34 +466,32 @@ PAGE_W, PAGE_H = A4
 
 def _styles():
     ss = getSampleStyleSheet()
-    ss.add(ParagraphStyle(name="TitleCover", parent=ss["Title"], fontSize=28,
-                          textColor=colors.white, alignment=1, spaceAfter=6))
-    ss.add(ParagraphStyle(name="SubtitleCover", parent=ss["Normal"], fontSize=12,
-                          textColor=colors.white, alignment=1, spaceAfter=6))
+    ss.add(ParagraphStyle(name="CoverTitle", fontName="Helvetica-Bold",
+                          fontSize=28, textColor=TEXTO, alignment=1, spaceAfter=6))
+    ss.add(ParagraphStyle(name="CoverSubtitle", parent=ss["Normal"], fontSize=12,
+                          textColor=GRIS, alignment=1, spaceAfter=8))
     ss.add(ParagraphStyle(name="TitleBig", parent=ss["Title"], fontSize=24, textColor=TEXTO, alignment=0, spaceAfter=10))
     ss.add(ParagraphStyle(name="H1", parent=ss["Heading1"], fontSize=18, textColor=TEXTO, spaceAfter=8))
     ss.add(ParagraphStyle(name="H2", parent=ss["Heading2"], fontSize=14, textColor=TEXTO, spaceAfter=6))
     ss.add(ParagraphStyle(name="Body", parent=ss["Normal"], fontSize=11, leading=14, textColor="#111"))
-    ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9, textColor=GRIS))
+    ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9.4, textColor=GRIS))
+    ss.add(ParagraphStyle(name="TableHead", parent=ss["Normal"], fontSize=9.5, textColor=colors.white))
     return ss
 
-# --- páginas (encabezados) ---
 def _page_cover(canv, doc):
-    # Banda superior (color institucional)
+    # portada limpia: línea fina superior de acento
     canv.setFillColor(colors.HexColor(TEXTO))
-    canv.rect(0, PAGE_H - 4.2*cm, PAGE_W, 4.2*cm, fill=1, stroke=0)
+    canv.rect(0, PAGE_H - 0.9*cm, PAGE_W, 0.9*cm, fill=1, stroke=0)
 
 def _page_normal(canv, doc):
-    # icono esquina sup-izq (más grande)
     icon_path = _image_path_if_exists(IMG_ICONO_PEQUENO)
     if icon_path:
         canv.drawImage(icon_path, doc.leftMargin, PAGE_H - doc.topMargin + 0.25*cm,
                        width=1.3*cm, height=1.3*cm, mask='auto')
 
 def _page_last(canv, doc):
-    # banda inferior
     canv.setFillColor(colors.HexColor(TEXTO))
-    canv.rect(0, 0, PAGE_W, 1.2*cm, fill=1, stroke=0)
+    canv.rect(0, 0, PAGE_W, 0.9*cm, fill=1, stroke=0)
 
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     x        = np.arange(len(df_par))
@@ -505,7 +503,7 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
     ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=0, ha="right")
-    ax1.set_title(titulo if titulo.strip() else "Pareto — Frecuencia y % acumulado", color=TEXTO)
+    ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
     ax2 = ax1.twinx()
     ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
     ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
@@ -540,10 +538,19 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     # anchos proporcionados al ancho útil (suma == doc_width)
-    fracs = [0.16, 0.44, 0.12, 0.10, 0.12, 0.06]  # =1.00
+    fracs = [0.18, 0.42, 0.12, 0.08, 0.10, 0.10]  # mejor lectura de últimos encabezados
     col_widths = [f * doc_width for f in fracs]
 
-    data = [["Categoría", "Descriptor", "Frecuencia", "%", "% acumulado", "Acumulado"]]
+    stys = _styles()
+    head = [
+        Paragraph("Categoría", stys["TableHead"]),
+        Paragraph("Descriptor", stys["TableHead"]),
+        Paragraph("Frecuencia", stys["TableHead"]),
+        Paragraph("%", stys["TableHead"]),
+        Paragraph("% acum.", stys["TableHead"]),
+        Paragraph("Acum.", stys["TableHead"]),
+    ]
+    data = [head]
     for _, r in df_par.iterrows():
         data.append([
             str(r["categoria"]),
@@ -568,17 +575,46 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     t.setStyle(style)
     return t
 
+# ---- Narrativas (personalizadas) ----
+def _tema_descriptor(descriptor: str) -> str:
+    d = descriptor.lower()
+    if "droga" in d or "búnker" in d or "bunker" in d or "narco" in d or "venta de drogas" in d:
+        return "drogas"
+    if "robo" in d or "hurto" in d or "asalto" in d or "vehícul" in d or "comercio" in d:
+        return "delitos contra la propiedad"
+    if "violencia" in d or "lesion" in d or "homicidio" in d:
+        return "violencia"
+    if "infraestructura" in d or "alumbrado" in d or "lotes" in d:
+        return "condiciones urbanas / entorno"
+    return "seguridad y convivencia"
+
 def _resumen_texto(df_par: pd.DataFrame) -> str:
     if df_par.empty:
         return "Sin datos disponibles."
     total = int(df_par["frecuencia"].sum())
     n = len(df_par)
     top = df_par.iloc[0]
-    # índice de corte 80%
     idx80 = int(np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max() + 1) if (df_par["segmento_real"]=="80%").any() else 0
-    return (f"Se registran **{total}** hechos distribuidos en **{n}** descriptores. "
-            f"El descriptor de mayor incidencia es **{top['descriptor']}** con **{int(top['frecuencia'])}** casos "
-            f"({float(top['porcentaje']):.2f}%). El punto de corte del **80%** se alcanza con **{idx80}** descriptores.")
+    tema = _tema_descriptor(str(top["descriptor"]))
+    # usar <b>…</b> (NO asteriscos)
+    return (f"Se registran <b>{total}</b> hechos distribuidos en <b>{n}</b> descriptores. "
+            f"El descriptor de mayor incidencia pertenece al ámbito de <b>{tema}</b>: "
+            f"<b>{top['descriptor']}</b>, con <b>{int(top['frecuencia'])}</b> casos "
+            f"({float(top['porcentaje']):.2f}%). El punto de corte del <b>80%</b> se alcanza con "
+            f"<b>{idx80}</b> descriptores, útiles para la priorización operativa.")
+
+def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
+    pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
+    pares_orden = sorted(pares_filtrados, key=lambda x: x[1], reverse=True)
+    tema = _tema_descriptor(descriptor)
+    if not pares_orden:
+        return (f"Para <b>{descriptor}</b> (ámbito: <b>{tema}</b>) no se reportaron modalidades con porcentaje. "
+                "Se sugiere recolectar esta información para focalizar acciones.")
+    top_txt = "; ".join([f"<b>{l}</b> ({p:.1f}%)" for l, p in pares_orden[:2]])
+    resto = sum(p for _, p in pares_orden[2:])
+    return (f"En <b>{descriptor}</b> (ámbito: <b>{tema}</b>) destacan: {top_txt}. "
+            f"El resto de modalidades suma <b>{resto:.1f}%</b>. "
+            "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
 
 def generar_pdf_informe(nombre_informe: str,
                         df_par: pd.DataFrame,
@@ -602,39 +638,30 @@ def generar_pdf_informe(nombre_informe: str,
     stys = _styles()
     story: List = []
 
-    # ---------- PORTADA (bonita) ----------
+    # ---------- PORTADA (limpia y con imagen grande centrada) ----------
     story += [NextPageTemplate("Normal")]
-    # bloque dentro de la banda (usamos KeepInFrame centrado)
-    titulo = Paragraph(nombre_informe, stys["TitleCover"])
-    subt   = Paragraph("Estrategia Integral de Prevención — Sembremos Seguridad", stys["SubtitleCover"])
+    story += [Spacer(1, 1.2*cm)]
+    story += [Paragraph(f"Informe de Paretos — {nombre_informe}", stys["CoverTitle"])]
+    story += [Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["CoverSubtitle"])]
     portada_path = _first_existing_path(IMG_PORTADA_GRANDE, IMG_PORTADA_MEDIANO)
-    portada_block = [Spacer(1, 3.1*cm), titulo, subt]
-    story += [KeepInFrame(doc.width, 3.8*cm, portada_block, hAlign="CENTER")]
-    # separador bajo banda
+    if portada_path:
+        story += [Spacer(1, 0.8*cm), RLImage(portada_path, width=11*cm, height=11*cm, hAlign="CENTER")]
     story += [Spacer(1, 0.6*cm)]
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["Small"])]
-    if portada_path:
-        # Imagen centrada, tamaño moderado y con margen inferior
-        story += [Spacer(1, 0.6*cm), RLImage(portada_path, width=6.5*cm, height=6.5*cm, hAlign="CENTER")]
     story += [PageBreak()]
 
     # ---------- RESULTADOS (resumen + gráfico + tabla) ----------
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
-    story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.4*cm)]
+    story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.35*cm)]
 
-    # Gráfico grande
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
     story += [RLImage(io.BytesIO(pareto_png), width=doc.width, height=9.2*cm)]
-    story += [Spacer(1, 0.4*cm)]
-
-    # Nota metodológica
+    story += [Spacer(1, 0.35*cm)]
     story += [Paragraph(
-        "El diagrama muestra la frecuencia por descriptor (barras en verde/azul) y el **porcentaje acumulado** (línea). "
-        "La línea punteada del 80% indica el **punto de corte** para priorización.",
+        "El diagrama muestra la frecuencia por descriptor (barras en verde/azul) y el <b>porcentaje acumulado</b> (línea). "
+        "La línea punteada del 80% indica el <b>punto de corte</b> para priorización.",
         stys["Small"]
     ), Spacer(1, 0.3*cm)]
-
-    # Tabla completa (ajustada al ancho útil)
     story.append(_tabla_resultados_flowable(df_par, doc.width))
     story += [PageBreak()]
 
@@ -644,25 +671,21 @@ def generar_pdf_informe(nombre_informe: str,
         rows = sec.get("rows", [])
         pares = [(r.get("Etiqueta",""), float(r.get("%", 0) or 0)) for r in rows]
 
-        story += [Paragraph(f"Modalidades de la problemática — {descriptor}", stys["TitleBig"]), Spacer(1, 0.2*cm)]
-        story += [Paragraph(
-            "Distribución porcentual de las modalidades reportadas para el descriptor seleccionado. "
-            "Se recomienda que la suma se aproxime al 100% a efectos de interpretación.",
-            stys["Small"]
-        ), Spacer(1, 0.3*cm)]
+        story += [Paragraph(f"Modalidades de la problemática — {descriptor}", stys["TitleBig"]), Spacer(1, 0.15*cm)]
+        story += [Paragraph(_texto_modalidades(descriptor, pares), stys["Small"]), Spacer(1, 0.25*cm)]
         mod_png = _modalidades_png(descriptor or "Modalidades", pares)
         story += [RLImage(io.BytesIO(mod_png), width=doc.width, height=9.0*cm)]
         if i < len(desgloses) - 1:
             story += [PageBreak()]
 
-    # ---------- CIERRE (última, sin páginas en blanco) ----------
+    # ---------- CIERRE (última) ----------
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
         Paragraph("Conclusiones y recomendaciones", stys["TitleBig"]),
         Spacer(1, 0.2*cm),
         Paragraph(
-            "• Priorizar intervenciones sobre los descriptores que conforman el **80% acumulado**. "
-            "• Coordinar acciones interinstitucionales enfocadas en las **modalidades** con mayor porcentaje. "
+            "• Priorizar intervenciones sobre los descriptores que conforman el <b>80% acumulado</b>. "
+            "• Coordinar acciones interinstitucionales enfocadas en las <b>modalidades</b> con mayor porcentaje. "
             "• Fortalecer la participación comunitaria y el control territorial en puntos críticos. "
             "• Monitorear indicadores mensualmente para evaluar la efectividad de las acciones.",
             stys["Body"]
@@ -675,7 +698,7 @@ def generar_pdf_informe(nombre_informe: str,
     doc.build(story)
     return buf.getvalue()
 
-# === Helpers UI para formulario de desgloses (reutilizable) ===
+# === Helpers UI formulario de desgloses ===
 def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     st.caption("Opcional: agrega secciones de ‘Modalidades’ (hasta 3). Cada sección admite hasta 10 filas (Etiqueta + %).")
     n_secs = st.number_input("Cantidad de secciones de Modalidades",
@@ -696,7 +719,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                 num_rows="fixed"
             )
             total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
-            st.caption(f"Suma actual: **{total_pct:.1f}%** (recomendado ≈100%)")
+            st.caption(f"Suma actual: {total_pct:.1f}% (recomendado ≈100%)")
             if dsel != "(elegir)":
                 desgloses.append({"descriptor": dsel, "rows": de.to_dict(orient="records")})
     return desgloses
@@ -872,7 +895,6 @@ else:
                     st.session_state["freq_map"] = dict(freq_map)
                     st.session_state["msel"] = list(freq_map.keys())
                     st.success(f"Pareto '{nom}' cargado al editor (arriba). Desplázate para editar.")
-                # Informe directo de este pareto guardado
                 with st.popover("📄 Informe PDF de este Pareto"):
                     nombre_inf_ind = st.text_input("Nombre del informe", value=f"Pareto — {nom}", key=f"inf_nom_{nom}")
                     desgloses_ind = ui_desgloses(tabla_g["descriptor"].tolist(), key_prefix=f"inf_{nom}")
@@ -946,7 +968,6 @@ else:
             )
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
-
 
 
 
