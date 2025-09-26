@@ -24,7 +24,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.lib import colors
-from PIL import Image
+from PIL import Image  # noqa: F401 (usada por reportlab internamente)
 
 # ----------------- CONFIG -----------------
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1cf-avzRjtBXcqr69WfrrsTAegm0PMAe8LgjeLpfcS5g/edit?usp=sharing"
@@ -35,16 +35,12 @@ st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 # Paleta (verde/azul)
 VERDE = "#1B9E77"
 AZUL  = "#2C7FB8"
-VERDE_CLARO = "#A6D96A"
-AZUL_CLARO  = "#B3CDE3"
-NARANJA = "#FF8C00"  # para resalte opcional en Excel
-SKY     = "#87CEEB"  # compat previo
-NEGRO   = "#000000"
+NEGRO = "#000000"
 
-# Íconos/portadas esperados en el directorio de la app (usa los que subiste al repo)
+# Íconos/portadas esperados en el directorio de la app
 IMG_ICONO_PEQUENO     = "Iconos pequeños.png"         # esquina sup-izq en páginas intermedias
 IMG_PORTADA_GRANDE    = "Icono grande portada.png"    # portada
-IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # portada (si falta el grande)
+IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # portada (fallback)
 
 # ==========================================
 # 1) CATÁLOGO EMBEBIDO
@@ -299,9 +295,9 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax2.axhline(80, linestyle="--", linewidth=1)
     st.pyplot(fig)
 
-# --- Excel export (se mantiene) ---
+# --- Excel export ---
 def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
-    import xlsxwriter  # aseguramos motor
+    import xlsxwriter
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         hoja = "Pareto"
@@ -419,7 +415,6 @@ if st.session_state.get("reset_after_save", False):
 # ==========================================
 # 5) MAPA DE IMÁGENES POR DESCRIPTOR
 # ==========================================
-# Simple match por palabras clave (ajústalo/expándelo cuando agregues más imágenes)
 IMG_BY_KEYWORD = {
     "búnker": "Bunker.png",
     "bunker": "Bunker.png",
@@ -430,7 +425,6 @@ IMG_BY_KEYWORD = {
     "venta de drogas": "Venta de drogas.png",
     "violencia intrafamiliar": "Violencia intrafamiliar.png",
 }
-
 def _find_image_for_descriptor(descriptor: str) -> str | None:
     dnorm = descriptor.lower()
     for k, fname in IMG_BY_KEYWORD.items():
@@ -456,15 +450,12 @@ def _draw_header_icon_if_needed(c: canvas.Canvas, is_first: bool, is_last: bool)
         return
     ir = _safe_image_reader(IMG_ICONO_PEQUENO)
     if ir:
-        # esquina sup-izq (margen 1.2cm)
         c.drawImage(ir, 1.2*cm, PAGE_H - 2.4*cm, width=1.1*cm, height=1.1*cm, mask='auto')
 
 def _title_portada(c: canvas.Canvas, titulo: str):
     c.setFillColor(colors.HexColor("#124559"))
-    # Portada con imagen grande/mediana
     ir = _safe_image_reader(IMG_PORTADA_GRANDE) or _safe_image_reader(IMG_PORTADA_MEDIANO)
     if ir:
-        # imagen centrada arriba
         iw, ih = ir.getSize()
         ratio = (8*cm) / max(iw, ih)
         w = iw*ratio; h = ih*ratio
@@ -476,12 +467,10 @@ def _title_portada(c: canvas.Canvas, titulo: str):
     c.drawCentredString(PAGE_W/2, PAGE_H - 13.3*cm, "Estrategia Integral de Prevención — Sembremos Seguridad")
     c.showPage()
 
-def _table_results_image(df: pd.DataFrame, titulo: str) -> bytes:
-    # Renderiza la tabla “Resultados” como imagen (para embeber en PDF fácil)
+def _table_results_image(df: pd.DataFrame) -> bytes:
     fig, ax = plt.subplots(figsize=(8.4, 6.2))
     ax.axis('off')
-    show = df.copy()
-    show = show[["categoria","descriptor","frecuencia"]].rename(columns={
+    show = df[["categoria","descriptor","frecuencia"]].rename(columns={
         "categoria":"Categoría","descriptor":"Descriptor","frecuencia":"Frecuencia"
     })
     the_table = ax.table(cellText=show.values, colLabels=show.columns, loc='center')
@@ -492,7 +481,6 @@ def _table_results_image(df: pd.DataFrame, titulo: str) -> bytes:
     return buf.getvalue()
 
 def _pareto_fig_image(df_par: pd.DataFrame, titulo: str) -> bytes:
-    # Mismo estilo que en pantalla
     x        = np.arange(len(df_par))
     freqs    = df_par["frecuencia"].to_numpy()
     pct_acum = df_par["pct_acum"].to_numpy()
@@ -513,13 +501,12 @@ def _pareto_fig_image(df_par: pd.DataFrame, titulo: str) -> bytes:
     return buf.getvalue()
 
 def _pie_image_from_breakdown(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
-    # data_pairs: [(label, pct), ...] (suma aprox 100)
     labels = [l for l, _ in data_pairs if l]
     sizes  = [float(p or 0) for _, p in data_pairs if _]
     if not labels or sum(sizes) <= 0:
         labels, sizes = ["Sin datos"], [100]
     fig, ax = plt.subplots(figsize=(7.5, 5))
-    wedges, _ = ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
+    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
     ax.axis('equal'); ax.set_title(title, color="#124559")
     buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="PNG", dpi=200); plt.close(fig)
     return buf.getvalue()
@@ -529,7 +516,7 @@ def generar_pdf_informe(nombre_informe: str,
                         desgloses: List[Dict]) -> bytes:
     """
     desgloses: lista de secciones. Cada dict:
-        {"descriptor": str, "pares": List[Tuple[label, porcentaje]]}
+        {"descriptor": str, "rows": [{"Etiqueta": str, "%": float}, ...]}
     """
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
@@ -537,35 +524,27 @@ def generar_pdf_informe(nombre_informe: str,
     # 1) Portada
     _title_portada(c, nombre_informe)
 
-    # 2) Resultados (tabla) + imagen de descriptor (si aplica) + diagrama pareto
+    # 2) Resultados + imagen asociada al TOP 1 (si existe)
     _draw_header_icon_if_needed(c, is_first=False, is_last=False)
-    # Imagen asociada al TOP 1 si existe
     top_img = _find_image_for_descriptor(df_par.iloc[0]["descriptor"]) if not df_par.empty else None
-    if top_img:
-        ir = _safe_image_reader(top_img)
-    else:
-        ir = None
-
-    # Tabla de resultados a PNG e inserción
-    tbl_png = _table_results_image(df_par, "Resultados")
+    ir = _safe_image_reader(top_img)
+    tbl_png = _table_results_image(df_par)
     c.drawImage(ImageReader(io.BytesIO(tbl_png)), 1.5*cm, 8.0*cm, width=18*cm-3*cm, height=11*cm, mask='auto')
     if ir:
         c.drawImage(ir, PAGE_W-6.5*cm, PAGE_H-7.5*cm, width=5.5*cm, height=5.5*cm, mask='auto')
-
     c.showPage()
 
-    # 3) Página con Diagrama de Pareto
+    # 3) Diagrama de Pareto
     _draw_header_icon_if_needed(c, is_first=False, is_last=False)
     pareto_png = _pareto_fig_image(df_par, "Diagrama de Pareto")
     c.drawImage(ImageReader(io.BytesIO(pareto_png)), 1.5*cm, 5.5*cm, width=18*cm-3*cm, height=11*cm, mask='auto')
     c.showPage()
 
-    # 4) Secciones de “Modalidades” (una página por desglose)
-    for idx, sec in enumerate(desgloses):
+    # 4) Modalidades
+    for sec in desgloses:
         _draw_header_icon_if_needed(c, is_first=False, is_last=False)
         descriptor = sec.get("descriptor","").strip()
         pares = [(p.get("Etiqueta",""), float(p.get("%", 0) or 0)) for p in sec.get("rows", [])]
-        # título + imagen asociada al descriptor
         c.setFont("Helvetica-Bold", 16); c.setFillColor(colors.HexColor("#124559"))
         c.drawString(2*cm, PAGE_H - 3*cm, f"Modalidades de la problemática — {descriptor}")
         dimg = _safe_image_reader(_find_image_for_descriptor(descriptor))
@@ -575,13 +554,39 @@ def generar_pdf_informe(nombre_informe: str,
         c.drawImage(ImageReader(io.BytesIO(pie_png)), 2*cm, 4.0*cm, width=16*cm, height=11*cm, mask='auto')
         c.showPage()
 
-    # 5) Cierre (última página sin icono)
+    # 5) Cierre (última)
     c.setFont("Helvetica-Bold", 18); c.setFillColor(colors.HexColor("#124559"))
     c.drawCentredString(PAGE_W/2, PAGE_H - 6*cm, "Sembremos Seguridad – Resultados")
     c.setFont("Helvetica", 11); c.setFillColor(colors.black)
     c.drawCentredString(PAGE_W/2, PAGE_H - 7.2*cm, "Dirección de Programas Policiales Preventivos – MSP")
     c.save()
     return buf.getvalue()
+
+# === Helpers UI para formulario de desgloses (reutilizable) ===
+def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
+    st.caption("Opcional: agrega secciones de ‘Modalidades’ (hasta 3). Cada sección admite hasta 10 filas (Etiqueta + %).")
+    n_secs = st.number_input("Cantidad de secciones de Modalidades",
+                             min_value=0, max_value=3, value=1, step=1, key=f"{key_prefix}_nsecs")
+    desgloses: List[Dict] = []
+    for i in range(n_secs):
+        with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
+            dsel = st.selectbox(f"Descriptor para la sección #{i+1}",
+                                options=["(elegir)"] + descriptor_list, index=0, key=f"{key_prefix}_desc_{i}")
+            rows = [{"Etiqueta":"", "%":0.0} for _ in range(10)]
+            df_rows = pd.DataFrame(rows)
+            de = st.data_editor(
+                df_rows, key=f"{key_prefix}_rows_{i}", use_container_width=True,
+                column_config={
+                    "Etiqueta": st.column_config.TextColumn("Etiqueta / Modalidad", width="large"),
+                    "%": st.column_config.NumberColumn("Porcentaje", min_value=0.0, max_value=100.0, step=0.1)
+                },
+                num_rows="fixed"
+            )
+            total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
+            st.caption(f"Suma actual: **{total_pct:.1f}%** (se recomienda ~100%)")
+            if dsel != "(elegir)":
+                desgloses.append({"descriptor": dsel, "rows": de.to_dict(orient="records")})
+    return desgloses
 
 # ==========================================
 # 7) UI PRINCIPAL (Editor Pareto)
@@ -667,48 +672,20 @@ if seleccion:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-    # ==========================================================
-    # 5) Elaborador de INFORME PDF (formulario de desgloses)
-    # ==========================================================
+    # ===== Elaborador de INFORME PDF (desde el editor) =====
     st.markdown("---")
-    st.header("🧾 Elaborar Informe PDF")
-
+    st.header("🧾 Elaborar Informe PDF (desde el editor)")
     nombre_informe = st.text_input(
         "Nombre del informe (portada)", 
-        value=(nombre_para_guardar.strip() or "Pareto Comunidad")
+        value=(nombre_para_guardar.strip() or "Pareto Comunidad"),
+        key="inf_editor_nombre"
     )
-
-    st.caption("Opcional: agrega secciones de ‘Modalidades’ (hasta 3). Cada sección admite hasta 10 filas (Etiqueta + %).")
-
-    # definimos cuántas secciones quiere
-    n_secs = st.number_input("Cantidad de secciones de Modalidades", min_value=0, max_value=3, value=1, step=1)
-
-    desgloses = []
-    candidatos = tabla["descriptor"].tolist() if not tabla.empty else []
-    for i in range(n_secs):
-        with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
-            dsel = st.selectbox(f"Descriptor para la sección #{i+1}", options=["(elegir)"] + candidatos, index=0, key=f"sec_desc_{i}")
-            # tabla para hasta 10 filas
-            rows = [{"Etiqueta":"", "%":0.0} for _ in range(10)]
-            df_rows = pd.DataFrame(rows)
-            de = st.data_editor(
-                df_rows, key=f"sec_rows_{i}", use_container_width=True,
-                column_config={
-                    "Etiqueta": st.column_config.TextColumn("Etiqueta / Modalidad", width="large"),
-                    "%": st.column_config.NumberColumn("Porcentaje", min_value=0.0, max_value=100.0, step=0.1)
-                },
-                num_rows="fixed"
-            )
-            total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
-            st.caption(f"Suma actual: **{total_pct:.1f}%** (se recomienda ~100%)")
-            if dsel != "(elegir)":
-                desgloses.append({"descriptor": dsel, "rows": de.to_dict(orient="records")})
-
+    desgloses = ui_desgloses(tabla["descriptor"].tolist(), key_prefix="editor")
     col_inf1, col_inf2 = st.columns([1,3])
     with col_inf1:
-        gen = st.button("📄 Generar Informe PDF", type="primary", use_container_width=True)
+        gen = st.button("📄 Generar Informe PDF (editor)", type="primary", use_container_width=True, key="btn_inf_editor")
     with col_inf2:
-        st.caption("El PDF incluirá: Portada, Resultados, Diagrama de Pareto y cada sección de Modalidades en páginas separadas. Ícono pequeño se muestra en páginas intermedias.")
+        st.caption("El PDF incluirá: Portada, Resultados, Diagrama de Pareto y cada sección de Modalidades.")
 
     if gen:
         if tabla.empty:
@@ -721,6 +698,7 @@ if seleccion:
                 data=pdf_bytes,
                 file_name=f"informe_{nombre_informe.lower().replace(' ','_')}.pdf",
                 mime="application/pdf",
+                key="dl_inf_editor",
             )
 
 else:
@@ -781,6 +759,19 @@ else:
                     st.session_state["freq_map"] = dict(freq_map)
                     st.session_state["msel"] = list(freq_map.keys())
                     st.success(f"Pareto '{nom}' cargado al editor (arriba). Desplázate para editar.")
+                # Informe directo de este pareto guardado
+                with st.popover("📄 Informe PDF de este Pareto"):
+                    nombre_inf_ind = st.text_input("Nombre del informe", value=f"Pareto — {nom}", key=f"inf_nom_{nom}")
+                    desgloses_ind = ui_desgloses(tabla_g["descriptor"].tolist(), key_prefix=f"inf_{nom}")
+                    if st.button("Generar PDF", key=f"btn_inf_{nom}"):
+                        pdf_bytes = generar_pdf_informe(nombre_inf_ind, tabla_g, desgloses_ind)
+                        st.download_button(
+                            "⬇️ Descargar PDF",
+                            data=pdf_bytes,
+                            file_name=f"informe_{nom.lower().replace(' ','_')}.pdf",
+                            mime="application/pdf",
+                            key=f"dl_inf_{nom}",
+                        )
                 if st.button("🗑️ Eliminar de la sesión", key=f"del_{nom}"):
                     try:
                         del st.session_state["portafolio"][nom]
@@ -789,6 +780,7 @@ else:
                     except Exception:
                         st.error("No se pudo eliminar. Intenta de nuevo.")
 
+    # ---------- UNIFICADO ----------
     st.markdown("---"); st.header("🔗 Pareto Unificado (por filtro o general)")
     maps_a_unir = []; titulo_unif = ""
     if unificar_todos and nombres:
@@ -823,13 +815,24 @@ else:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_unificado",
             )
+
+        # ===== Informe PDF Unificado / General =====
+        st.markdown("### 🧾 Elaborar Informe PDF (Unificado / General)")
+        nombre_inf_unif = st.text_input("Nombre del informe",
+                                        value=(titulo_unif or "Pareto Unificado"),
+                                        key="inf_unif_nombre")
+        desgloses_unif = ui_desgloses(tabla_unif["descriptor"].tolist(), key_prefix="unif")
+        if st.button("📄 Generar Informe PDF (unificado)", key="btn_inf_unif"):
+            pdf_bytes = generar_pdf_informe(nombre_inf_unif, tabla_unif, desgloses_unif)
+            st.download_button(
+                "⬇️ Descargar Informe PDF",
+                data=pdf_bytes,
+                file_name=f"informe_{(titulo_unif or 'Pareto Unificado').lower().replace(' ','_')}.pdf",
+                mime="application/pdf",
+                key="dl_inf_unif",
+            )
     else:
-        st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS'.")
-
-
-
-
-
+        st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
 
 
 
