@@ -3,6 +3,8 @@ numpy
 openpyxl
 XlsxWriter
 matplotlib
+gspread
+
 
 
 
