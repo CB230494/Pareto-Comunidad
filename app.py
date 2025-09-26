@@ -1,9 +1,10 @@
-# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF legible (verde/azul)
-# -------------------------------------------------------------------------------------------
-# Requisitos:
+# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (mejorado)
+# ---------------------------------------------------------------------------------
+# Instalar:
 #   pip install -r requirements.txt
+# Ejecutar:
 #   streamlit run app.py
-# -------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------
 
 import io
 import os
@@ -29,6 +30,7 @@ from reportlab.platypus import (
     Paragraph, Spacer, Image as RLImage, Table, TableStyle,
     PageBreak, NextPageTemplate, KeepInFrame
 )
+from datetime import datetime
 
 # ----------------- CONFIG -----------------
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1cf-avzRjtBXcqr69WfrrsTAegm0PMAe8LgjeLpfcS5g/edit?usp=sharing"
@@ -40,6 +42,7 @@ st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 VERDE = "#1B9E77"
 AZUL  = "#2C7FB8"
 TEXTO = "#124559"
+GRIS  = "#6B7280"
 
 # Íconos/portadas esperados (exactamente estos nombres, junto a app.py)
 IMG_ICONO_PEQUENO     = "Iconos pequeños.png"         # esquina sup-izq en páginas intermedias
@@ -48,19 +51,18 @@ IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # portada (fallback)
 
 # ============== AJUSTES MATPLOTLIB (legibilidad) ==============
 plt.rcParams.update({
-    "figure.dpi": 160,
-    "savefig.dpi": 160,
-    "axes.titlesize": 16,
-    "axes.labelsize": 12,
-    "xtick.labelsize": 9,
-    "ytick.labelsize": 10,
+    "figure.dpi": 180,
+    "savefig.dpi": 180,
+    "axes.titlesize": 18,
+    "axes.labelsize": 13,
+    "xtick.labelsize": 10,
+    "ytick.labelsize": 11,
     "axes.grid": True,
     "grid.alpha": 0.25,
 })
 
 # ============================================================================
-# 1) CATÁLOGO EMBEBIDO
-# (…lista completa sin cambios…)
+# 1) CATÁLOGO EMBEBIDO  (…lista completa idéntica…)
 # ============================================================================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
@@ -303,7 +305,7 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
 
-    fig, ax1 = plt.subplots(figsize=(14, 5))
+    fig, ax1 = plt.subplots(figsize=(14, 5.8))
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
@@ -320,7 +322,6 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
 
 # --- Excel export ---
 def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
-    import xlsxwriter
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         hoja = "Pareto"
@@ -428,7 +429,7 @@ if st.session_state.get("reset_after_save", False):
     st.session_state["reset_after_save"] = False
 
 # ============================================================================
-# 5) IMÁGENES
+# 5) IMÁGENES (mapeo por palabra clave)
 # ============================================================================
 def _image_path_if_exists(path: Optional[str]) -> Optional[str]:
     if path and os.path.exists(path):
@@ -451,7 +452,6 @@ IMG_BY_KEYWORD = {
     "venta de drogas": "Venta de drogas.png",
     "violencia intrafamiliar": "Violencia intrafamiliar.png",
 }
-
 def _find_image_path_for_descriptor(descriptor: str) -> Optional[str]:
     dnorm = descriptor.lower()
     for k, fname in IMG_BY_KEYWORD.items():
@@ -466,34 +466,41 @@ PAGE_W, PAGE_H = A4
 
 def _styles():
     ss = getSampleStyleSheet()
-    ss.add(ParagraphStyle(name="TitleBig", parent=ss["Title"], fontSize=26, textColor=TEXTO, alignment=1, spaceAfter=12))
-    ss.add(ParagraphStyle(name="Subtle", parent=ss["Normal"], fontSize=11, textColor="#333333", alignment=1))
+    ss.add(ParagraphStyle(name="TitleCover", parent=ss["Title"], fontSize=28,
+                          textColor=colors.white, alignment=1, spaceAfter=6))
+    ss.add(ParagraphStyle(name="SubtitleCover", parent=ss["Normal"], fontSize=12,
+                          textColor=colors.white, alignment=1, spaceAfter=6))
+    ss.add(ParagraphStyle(name="TitleBig", parent=ss["Title"], fontSize=24, textColor=TEXTO, alignment=0, spaceAfter=10))
     ss.add(ParagraphStyle(name="H1", parent=ss["Heading1"], fontSize=18, textColor=TEXTO, spaceAfter=8))
     ss.add(ParagraphStyle(name="H2", parent=ss["Heading2"], fontSize=14, textColor=TEXTO, spaceAfter=6))
-    ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9, textColor="#333333"))
+    ss.add(ParagraphStyle(name="Body", parent=ss["Normal"], fontSize=11, leading=14, textColor="#111"))
+    ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9, textColor=GRIS))
     return ss
 
-def _page_first(canv, doc):
-    # sin icono
-    pass
+# --- páginas (encabezados) ---
+def _page_cover(canv, doc):
+    # Banda superior (color institucional)
+    canv.setFillColor(colors.HexColor(TEXTO))
+    canv.rect(0, PAGE_H - 4.2*cm, PAGE_W, 4.2*cm, fill=1, stroke=0)
 
 def _page_normal(canv, doc):
-    # icono esquina sup-izq (si existe)
+    # icono esquina sup-izq (más grande)
     icon_path = _image_path_if_exists(IMG_ICONO_PEQUENO)
     if icon_path:
-        canv.drawImage(icon_path, doc.leftMargin, PAGE_H - doc.topMargin + 0.2*cm,
-                       width=1.05*cm, height=1.05*cm, mask='auto')
+        canv.drawImage(icon_path, doc.leftMargin, PAGE_H - doc.topMargin + 0.25*cm,
+                       width=1.3*cm, height=1.3*cm, mask='auto')
 
 def _page_last(canv, doc):
-    # sin icono
-    pass
+    # banda inferior
+    canv.setFillColor(colors.HexColor(TEXTO))
+    canv.rect(0, 0, PAGE_W, 1.2*cm, fill=1, stroke=0)
 
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     x        = np.arange(len(df_par))
     freqs    = df_par["frecuencia"].to_numpy()
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
-    fig, ax1 = plt.subplots(figsize=(12, 4.6))
+    fig, ax1 = plt.subplots(figsize=(12.5, 5.2))
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
@@ -510,7 +517,6 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     return buf.getvalue()
 
 def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
-    # Barras horizontales (más legible que pie)
     labels = [l for l, _ in data_pairs if str(l).strip()]
     vals   = [float(p or 0) for _, p in data_pairs if str(_).strip()]
     if not labels:
@@ -518,7 +524,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
     order = np.argsort(vals)[::-1]
     labels = [labels[i] for i in order]
     vals   = [vals[i]   for i in order]
-    fig, ax = plt.subplots(figsize=(10.5, 5))
+    fig, ax = plt.subplots(figsize=(11.5, 5.8))
     y = np.arange(len(labels))
     ax.barh(y, vals, color=AZUL)
     ax.set_yticks(y)
@@ -527,13 +533,16 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
     ax.set_xlabel("Porcentaje")
     ax.set_xlim(0, max(100, max(vals)*1.05))
     for i, v in enumerate(vals):
-        ax.text(v + 1, i, f"{v:.1f}%", va="center", fontsize=9)
+        ax.text(v + 1, i, f"{v:.1f}%", va="center", fontsize=10)
     ax.set_title(title, color=TEXTO)
     buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="PNG"); plt.close(fig)
     return buf.getvalue()
 
-def _tabla_resultados_flowable(df_par: pd.DataFrame) -> Table:
-    # Tabla legible con zebra + alineaciones
+def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
+    # anchos proporcionados al ancho útil (suma == doc_width)
+    fracs = [0.16, 0.44, 0.12, 0.10, 0.12, 0.06]  # =1.00
+    col_widths = [f * doc_width for f in fracs]
+
     data = [["Categoría", "Descriptor", "Frecuencia", "%", "% acumulado", "Acumulado"]]
     for _, r in df_par.iterrows():
         data.append([
@@ -544,21 +553,32 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame) -> Table:
             f'{float(r["pct_acum"]):.2f}%',
             int(r["acumulado"]),
         ])
-    col_widths = [3.2*cm, 9.6*cm, 2.1*cm, 2.2*cm, 3.0*cm, 2.4*cm]
-    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     style = TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor(TEXTO)),
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
         ("ALIGN",      (2,1), (-1,-1), "RIGHT"),
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",   (0,0), (-1,0), 10),
-        ("FONTSIZE",   (0,1), (-1,-1), 9),
+        ("FONTSIZE",   (0,1), (-1,-1), 9.2),
         ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.whitesmoke, colors.Color(0.97,0.97,0.97)]),
         ("GRID",       (0,0), (-1,-1), 0.25, colors.lightgrey),
         ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
     ])
     t.setStyle(style)
     return t
+
+def _resumen_texto(df_par: pd.DataFrame) -> str:
+    if df_par.empty:
+        return "Sin datos disponibles."
+    total = int(df_par["frecuencia"].sum())
+    n = len(df_par)
+    top = df_par.iloc[0]
+    # índice de corte 80%
+    idx80 = int(np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max() + 1) if (df_par["segmento_real"]=="80%").any() else 0
+    return (f"Se registran **{total}** hechos distribuidos en **{n}** descriptores. "
+            f"El descriptor de mayor incidencia es **{top['descriptor']}** con **{int(top['frecuencia'])}** casos "
+            f"({float(top['porcentaje']):.2f}%). El punto de corte del **80%** se alcanza con **{idx80}** descriptores.")
 
 def generar_pdf_informe(nombre_informe: str,
                         df_par: pd.DataFrame,
@@ -567,73 +587,89 @@ def generar_pdf_informe(nombre_informe: str,
     desgloses: [{"descriptor": str, "rows": [{"Etiqueta": str, "%": float}, ...]}, ...]
     """
     buf = io.BytesIO()
-    # Documento con 3 plantillas: First (sin icono), Normal (con icono), Last (sin icono)
     doc = BaseDocTemplate(
         buf, pagesize=A4,
         leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm
     )
-    frame_std = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal")
+    frame_std  = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal")
     frame_last = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="last")
 
     doc.addPageTemplates([
-        PageTemplate(id="First", frames=[frame_std], onPage=_page_first),
+        PageTemplate(id="Cover",  frames=[frame_std], onPage=_page_cover),
         PageTemplate(id="Normal", frames=[frame_std], onPage=_page_normal),
-        PageTemplate(id="Last", frames=[frame_last], onPage=_page_last),
+        PageTemplate(id="Last",   frames=[frame_last], onPage=_page_last),
     ])
     stys = _styles()
     story: List = []
 
-    # ---------- PORTADA ----------
+    # ---------- PORTADA (bonita) ----------
+    story += [NextPageTemplate("Normal")]
+    # bloque dentro de la banda (usamos KeepInFrame centrado)
+    titulo = Paragraph(nombre_informe, stys["TitleCover"])
+    subt   = Paragraph("Estrategia Integral de Prevención — Sembremos Seguridad", stys["SubtitleCover"])
     portada_path = _first_existing_path(IMG_PORTADA_GRANDE, IMG_PORTADA_MEDIANO)
-    if portada_path:
-        im = RLImage(portada_path, width=8*cm, height=8*cm)
-        story += [Spacer(1, 4*cm), KeepInFrame(16*cm, 8.2*cm, [im], hAlign="CENTER"), Spacer(1, 0.5*cm)]
-    else:
-        story += [Spacer(1, 6.5*cm)]
-    story += [
-        Paragraph(nombre_informe, stys["TitleBig"]),
-        Paragraph("Estrategia Integral de Prevención — Sembremos Seguridad", stys["Subtle"]),
-        NextPageTemplate("Normal"), PageBreak()
-    ]
-
-    # ---------- RESULTADOS (tabla) ----------
-    story += [Paragraph("Resultados generales", stys["H1"]), Spacer(1, 0.2*cm)]
-    story.append(_tabla_resultados_flowable(df_par))
+    portada_block = [Spacer(1, 3.1*cm), titulo, subt]
+    story += [KeepInFrame(doc.width, 3.8*cm, portada_block, hAlign="CENTER")]
+    # separador bajo banda
     story += [Spacer(1, 0.6*cm)]
-
-    # Foto asociada al TOP 1 (si existe)
-    if not df_par.empty:
-        top_img_path = _find_image_path_for_descriptor(df_par.iloc[0]["descriptor"])
-        if top_img_path:
-            story += [Spacer(1, 0.3*cm), RLImage(top_img_path, width=5.2*cm, height=5.2*cm, hAlign="RIGHT")]
-
+    story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["Small"])]
+    if portada_path:
+        # Imagen centrada, tamaño moderado y con margen inferior
+        story += [Spacer(1, 0.6*cm), RLImage(portada_path, width=6.5*cm, height=6.5*cm, hAlign="CENTER")]
     story += [PageBreak()]
 
-    # ---------- DIAGRAMA PARETO ----------
-    story += [Paragraph("Diagrama de Pareto", stys["H1"]), Spacer(1, 0.2*cm)]
+    # ---------- RESULTADOS (resumen + gráfico + tabla) ----------
+    story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
+    story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.4*cm)]
+
+    # Gráfico grande
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
-    story += [RLImage(io.BytesIO(pareto_png), width=doc.width, height=8.5*cm)]
+    story += [RLImage(io.BytesIO(pareto_png), width=doc.width, height=9.2*cm)]
+    story += [Spacer(1, 0.4*cm)]
+
+    # Nota metodológica
+    story += [Paragraph(
+        "El diagrama muestra la frecuencia por descriptor (barras en verde/azul) y el **porcentaje acumulado** (línea). "
+        "La línea punteada del 80% indica el **punto de corte** para priorización.",
+        stys["Small"]
+    ), Spacer(1, 0.3*cm)]
+
+    # Tabla completa (ajustada al ancho útil)
+    story.append(_tabla_resultados_flowable(df_par, doc.width))
     story += [PageBreak()]
 
     # ---------- MODALIDADES ----------
-    for sec in desgloses:
+    for i, sec in enumerate(desgloses):
         descriptor = sec.get("descriptor", "").strip()
         rows = sec.get("rows", [])
         pares = [(r.get("Etiqueta",""), float(r.get("%", 0) or 0)) for r in rows]
 
-        story += [Paragraph(f"Modalidades de la problemática — {descriptor}", stys["H1"]), Spacer(1, 0.2*cm)]
-        dimg_path = _find_image_path_for_descriptor(descriptor)
-        if dimg_path:
-            story += [RLImage(dimg_path, width=4.5*cm, height=4.5*cm, hAlign="RIGHT"), Spacer(1, 0.2*cm)]
-        mod_png = _modalidades_png(descriptor, pares)
-        story += [RLImage(io.BytesIO(mod_png), width=doc.width, height=8.5*cm), PageBreak()]
+        story += [Paragraph(f"Modalidades de la problemática — {descriptor}", stys["TitleBig"]), Spacer(1, 0.2*cm)]
+        story += [Paragraph(
+            "Distribución porcentual de las modalidades reportadas para el descriptor seleccionado. "
+            "Se recomienda que la suma se aproxime al 100% a efectos de interpretación.",
+            stys["Small"]
+        ), Spacer(1, 0.3*cm)]
+        mod_png = _modalidades_png(descriptor or "Modalidades", pares)
+        story += [RLImage(io.BytesIO(mod_png), width=doc.width, height=9.0*cm)]
+        if i < len(desgloses) - 1:
+            story += [PageBreak()]
 
-    # ---------- CIERRE (última, sin icono) ----------
-    story += [NextPageTemplate("Last"), PageBreak()]
+    # ---------- CIERRE (última, sin páginas en blanco) ----------
+    story += [PageBreak(), NextPageTemplate("Last")]
     story += [
-        Paragraph("Sembremos Seguridad – Resultados", stys["TitleBig"]),
-        Spacer(1, 0.3*cm),
+        Paragraph("Conclusiones y recomendaciones", stys["TitleBig"]),
+        Spacer(1, 0.2*cm),
+        Paragraph(
+            "• Priorizar intervenciones sobre los descriptores que conforman el **80% acumulado**. "
+            "• Coordinar acciones interinstitucionales enfocadas en las **modalidades** con mayor porcentaje. "
+            "• Fortalecer la participación comunitaria y el control territorial en puntos críticos. "
+            "• Monitorear indicadores mensualmente para evaluar la efectividad de las acciones.",
+            stys["Body"]
+        ),
+        Spacer(1, 0.6*cm),
         Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H2"]),
+        Paragraph("Sembremos Seguridad", stys["Small"]),
     ]
 
     doc.build(story)
@@ -660,7 +696,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                 num_rows="fixed"
             )
             total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
-            st.caption(f"Suma actual: **{total_pct:.1f}%** (se recomienda ~100%)")
+            st.caption(f"Suma actual: **{total_pct:.1f}%** (recomendado ≈100%)")
             if dsel != "(elegir)":
                 desgloses.append({"descriptor": dsel, "rows": de.to_dict(orient="records")})
     return desgloses
@@ -762,7 +798,7 @@ if seleccion:
     with col_inf1:
         gen = st.button("📄 Generar Informe PDF (editor)", type="primary", use_container_width=True, key="btn_inf_editor")
     with col_inf2:
-        st.caption("Incluye: Portada, Resultados (tabla legible), Diagrama de Pareto y Modalidades en barras horizontales.")
+        st.caption("Incluye: Portada, Resumen + Gráfico + Tabla, Modalidades y Cierre (recomendaciones).")
 
     if gen:
         if tabla.empty:
@@ -910,7 +946,6 @@ else:
             )
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
-
 
 
 
