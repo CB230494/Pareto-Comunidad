@@ -1,7 +1,7 @@
-# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (v2, portada/narrativa/encabezados)
+# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (sin imágenes externas)
 # ---------------------------------------------------------------------------------
-# Instalar:
-#   pip install -r requirements.txt
+# Instalar (requirements típicos):
+#   streamlit pandas numpy openpyxl XlsxWriter matplotlib gspread google-auth reportlab Pillow
 # Ejecutar:
 #   streamlit run app.py
 # ---------------------------------------------------------------------------------
@@ -9,7 +9,7 @@
 import io
 import os
 from textwrap import wrap
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -28,7 +28,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import (
     BaseDocTemplate, PageTemplate, Frame,
     Paragraph, Spacer, Image as RLImage, Table, TableStyle,
-    PageBreak, NextPageTemplate, KeepInFrame
+    PageBreak, NextPageTemplate
 )
 from datetime import datetime
 
@@ -43,11 +43,6 @@ VERDE = "#1B9E77"
 AZUL  = "#2C7FB8"
 TEXTO = "#124559"
 GRIS  = "#6B7280"
-
-# Íconos/portadas
-IMG_ICONO_PEQUENO     = "Iconos pequeños.png"         # esquina superior izquierda (páginas intermedias)
-IMG_PORTADA_GRANDE    = "Icono grande portada.png"    # portada grande
-IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # fallback
 
 # ============== AJUSTES MATPLOTLIB (legibilidad) ==============
 plt.rcParams.update({
@@ -429,38 +424,7 @@ if st.session_state.get("reset_after_save", False):
     st.session_state["reset_after_save"] = False
 
 # ============================================================================
-# 5) IMÁGENES (mapeo por palabra clave)
-# ============================================================================
-def _image_path_if_exists(path: Optional[str]) -> Optional[str]:
-    if path and os.path.exists(path):
-        return path
-    return None
-
-def _first_existing_path(*candidates: str) -> Optional[str]:
-    for p in candidates:
-        if os.path.exists(p):
-            return p
-    return None
-
-IMG_BY_KEYWORD = {
-    "búnker": "Bunker.png",
-    "bunker": "Bunker.png",
-    "consumo de drogas": "Consumo de drogas.png",
-    "deficiencia en la infraestructura vial": "Deficiencia en la infraestructura Vial.png",
-    "estafa": "Estafa o defraudacion.png",
-    "falta de inversión social": "Falta de Inversion social.png",
-    "venta de drogas": "Venta de drogas.png",
-    "violencia intrafamiliar": "Violencia intrafamiliar.png",
-}
-def _find_image_path_for_descriptor(descriptor: str) -> Optional[str]:
-    dnorm = descriptor.lower()
-    for k, fname in IMG_BY_KEYWORD.items():
-        if k in dnorm and os.path.exists(fname):
-            return fname
-    return None
-
-# ============================================================================
-# 6) PDF (LEGIBLE) — Platypus
+# 5) PDF (LEGIBLE) — Platypus (sin imágenes externas)
 # ============================================================================
 PAGE_W, PAGE_H = A4
 
@@ -472,24 +436,20 @@ def _styles():
                           textColor=GRIS, alignment=1, spaceAfter=8))
     ss.add(ParagraphStyle(name="TitleBig", parent=ss["Title"], fontSize=24, textColor=TEXTO, alignment=0, spaceAfter=10))
     ss.add(ParagraphStyle(name="H1", parent=ss["Heading1"], fontSize=18, textColor=TEXTO, spaceAfter=8))
-    ss.add(ParagraphStyle(name="H2", parent=ss["Heading2"], fontSize=14, textColor=TEXTO, spaceAfter=6))
     ss.add(ParagraphStyle(name="Body", parent=ss["Normal"], fontSize=11, leading=14, textColor="#111"))
-    ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9.4, textColor=GRIS))
-    ss.add(ParagraphStyle(name="TableHead", parent=ss["Normal"], fontSize=9.5, textColor=colors.white))
+    ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9.6, textColor=GRIS))
+    ss.add(ParagraphStyle(name="TableHead", parent=ss["Normal"], fontSize=11, textColor=colors.white))
     return ss
 
 def _page_cover(canv, doc):
-    # portada limpia: línea fina superior de acento
     canv.setFillColor(colors.HexColor(TEXTO))
     canv.rect(0, PAGE_H - 0.9*cm, PAGE_W, 0.9*cm, fill=1, stroke=0)
 
-def _page_normal(canv, doc):
-    icon_path = _image_path_if_exists(IMG_ICONO_PEQUENO)
-    if icon_path:
-        canv.drawImage(icon_path, doc.leftMargin, PAGE_H - doc.topMargin + 0.25*cm,
-                       width=1.3*cm, height=1.3*cm, mask='auto')
+def _page_normal(_canv, _doc):
+    # Sin logos/íconos (por petición)
+    pass
 
-def _page_last(canv, doc):
+def _page_last(canv, _doc):
     canv.setFillColor(colors.HexColor(TEXTO))
     canv.rect(0, 0, PAGE_W, 0.9*cm, fill=1, stroke=0)
 
@@ -537,8 +497,8 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
     return buf.getvalue()
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
-    # anchos proporcionados al ancho útil (suma == doc_width)
-    fracs = [0.18, 0.42, 0.12, 0.08, 0.10, 0.10]  # mejor lectura de últimos encabezados
+    # Anchos pensados para que ENCABEZADOS no se corten
+    fracs = [0.18, 0.40, 0.14, 0.08, 0.10, 0.10]  # categoría, descriptor, frecuencia, %, % acum., acum.
     col_widths = [f * doc_width for f in fracs]
 
     stys = _styles()
@@ -566,8 +526,10 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
         ("ALIGN",      (2,1), (-1,-1), "RIGHT"),
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
-        ("FONTSIZE",   (0,0), (-1,0), 10),
-        ("FONTSIZE",   (0,1), (-1,-1), 9.2),
+        ("FONTSIZE",   (0,0), (-1,0), 11),
+        ("FONTSIZE",   (0,1), (-1,-1), 9.6),
+        ("LEFTPADDING",(0,0), (-1,-1), 6),
+        ("RIGHTPADDING",(0,0), (-1,-1), 6),
         ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.whitesmoke, colors.Color(0.97,0.97,0.97)]),
         ("GRID",       (0,0), (-1,-1), 0.25, colors.lightgrey),
         ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
@@ -575,7 +537,6 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     t.setStyle(style)
     return t
 
-# ---- Narrativas (personalizadas) ----
 def _tema_descriptor(descriptor: str) -> str:
     d = descriptor.lower()
     if "droga" in d or "búnker" in d or "bunker" in d or "narco" in d or "venta de drogas" in d:
@@ -596,7 +557,6 @@ def _resumen_texto(df_par: pd.DataFrame) -> str:
     top = df_par.iloc[0]
     idx80 = int(np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max() + 1) if (df_par["segmento_real"]=="80%").any() else 0
     tema = _tema_descriptor(str(top["descriptor"]))
-    # usar <b>…</b> (NO asteriscos)
     return (f"Se registran <b>{total}</b> hechos distribuidos en <b>{n}</b> descriptores. "
             f"El descriptor de mayor incidencia pertenece al ámbito de <b>{tema}</b>: "
             f"<b>{top['descriptor']}</b>, con <b>{int(top['frecuencia'])}</b> casos "
@@ -619,9 +579,6 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
 def generar_pdf_informe(nombre_informe: str,
                         df_par: pd.DataFrame,
                         desgloses: List[Dict]) -> bytes:
-    """
-    desgloses: [{"descriptor": str, "rows": [{"Etiqueta": str, "%": float}, ...]}, ...]
-    """
     buf = io.BytesIO()
     doc = BaseDocTemplate(
         buf, pagesize=A4,
@@ -638,14 +595,11 @@ def generar_pdf_informe(nombre_informe: str,
     stys = _styles()
     story: List = []
 
-    # ---------- PORTADA (limpia y con imagen grande centrada) ----------
+    # ---------- PORTADA (limpia, sin imagen) ----------
     story += [NextPageTemplate("Normal")]
     story += [Spacer(1, 1.2*cm)]
     story += [Paragraph(f"Informe de Paretos — {nombre_informe}", stys["CoverTitle"])]
     story += [Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["CoverSubtitle"])]
-    portada_path = _first_existing_path(IMG_PORTADA_GRANDE, IMG_PORTADA_MEDIANO)
-    if portada_path:
-        story += [Spacer(1, 0.8*cm), RLImage(portada_path, width=11*cm, height=11*cm, hAlign="CENTER")]
     story += [Spacer(1, 0.6*cm)]
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["Small"])]
     story += [PageBreak()]
@@ -691,7 +645,7 @@ def generar_pdf_informe(nombre_informe: str,
             stys["Body"]
         ),
         Spacer(1, 0.6*cm),
-        Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H2"]),
+        Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H1"]),
         Paragraph("Sembremos Seguridad", stys["Small"]),
     ]
 
@@ -725,7 +679,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     return desgloses
 
 # ============================================================================
-# 7) UI PRINCIPAL (Editor Pareto)
+# 6) UI PRINCIPAL (Editor Pareto)
 # ============================================================================
 st.title("Pareto de Descriptores")
 
@@ -841,7 +795,7 @@ else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
 
 # ============================================================================
-# 8) PORTAFOLIO, UNIFICADO Y DESCARGAS
+# 7) PORTAFOLIO, UNIFICADO Y DESCARGAS
 # ============================================================================
 st.markdown("---")
 st.header("📁 Portafolio de Paretos (guardados)")
@@ -897,6 +851,7 @@ else:
                     st.success(f"Pareto '{nom}' cargado al editor (arriba). Desplázate para editar.")
                 with st.popover("📄 Informe PDF de este Pareto"):
                     nombre_inf_ind = st.text_input("Nombre del informe", value=f"Pareto — {nom}", key=f"inf_nom_{nom}")
+                    # desgloses para este pareto
                     desgloses_ind = ui_desgloses(tabla_g["descriptor"].tolist(), key_prefix=f"inf_{nom}")
                     if st.button("Generar PDF", key=f"btn_inf_{nom}"):
                         pdf_bytes = generar_pdf_informe(nombre_inf_ind, tabla_g, desgloses_ind)
@@ -968,6 +923,4 @@ else:
             )
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
-
-
 
