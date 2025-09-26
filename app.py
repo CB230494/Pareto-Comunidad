@@ -441,11 +441,15 @@ def _styles():
     ss = getSampleStyleSheet()
     ss.add(ParagraphStyle(
         name="CoverTitle", fontName="Helvetica-Bold",
-        fontSize=30, leading=36, textColor=TEXTO, alignment=1, spaceAfter=14
+        fontSize=30, leading=36, textColor=TEXTO, alignment=1, spaceAfter=10
     ))
     ss.add(ParagraphStyle(
         name="CoverSubtitle", parent=ss["Normal"], fontSize=12,
         leading=16, textColor=GRIS, alignment=1, spaceAfter=10
+    ))
+    ss.add(ParagraphStyle(
+        name="CoverDate", parent=ss["Normal"], fontSize=12.5,
+        leading=16, textColor=TEXTO, alignment=0, spaceBefore=8
     ))
     ss.add(ParagraphStyle(
         name="TitleBig", parent=ss["Title"], fontSize=24,
@@ -512,7 +516,6 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
     return buf.getvalue()
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
-    # Anchos para que no se corten encabezados
     fracs = [0.18, 0.40, 0.14, 0.08, 0.10, 0.10]  # categoría, descriptor, frecuencia, %, % acum., acum.
     col_widths = [f * doc_width for f in fracs]
 
@@ -591,6 +594,29 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
             f"El resto de modalidades suma <b>{resto:.1f}%</b>. "
             "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
 
+def _descripcion_por_descriptor(row: pd.Series, rank: int, total_desc: int) -> str:
+    """Redacción corta y personalizada por descriptor."""
+    desc = str(row["descriptor"])
+    cat  = str(row["categoria"])
+    freq = int(row["frecuencia"])
+    pct  = float(row["porcentaje"])
+    acum = float(row["pct_acum"])
+    seg  = "núcleo (80%)" if row["segmento_real"] == "80%" else "cola (20%)"
+    tema = _tema_descriptor(desc)
+
+    enfoque = {
+        "drogas": "refuerzos de prevención, patrullajes focalizados y articulación con salud y municipalidad",
+        "delitos contra la propiedad": "controles de oportunidad, patrullajes en horarios críticos y apoyo a víctimas/comercios",
+        "violencia": "protocolos de atención, derivación a redes de apoyo y presencia disuasiva",
+        "condiciones urbanas / entorno": "mejoras del entorno, alumbrado y recuperación de espacios",
+        "seguridad y convivencia": "acciones de convivencia, mediación y trabajo comunitario"
+    }.get(tema, "acciones interinstitucionales")
+
+    return (f"({rank}/{total_desc}) <b>{desc}</b> — categoría: <b>{cat}</b>. "
+            f"Se contabilizan <b>{freq}</b> reportes, equivalentes al <b>{pct:.2f}%</b> "
+            f"({acum:.2f}% acumulado). Forma parte de la <b>{seg}</b> del Pareto. "
+            f"Sugerencias: {enfoque}.")
+
 def generar_pdf_informe(nombre_informe: str,
                         df_par: pd.DataFrame,
                         desgloses: List[Dict]) -> bytes:
@@ -612,11 +638,10 @@ def generar_pdf_informe(nombre_informe: str,
 
     # ---------- PORTADA (limpia, sin imagen) ----------
     story += [NextPageTemplate("Normal")]
-    story += [Spacer(1, 2.2*cm)]  # margen superior
-    story += [Paragraph(f"Informe de Paretos — {nombre_informe}", stys["CoverTitle"])]
+    story += [Spacer(1, 2.2*cm)]
+    story += [Paragraph(f"Informe de Pareto — {nombre_informe}", stys["CoverTitle"])]
     story += [Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["CoverSubtitle"])]
-    story += [Spacer(1, 0.6*cm)]
-    story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["Small"])]
+    story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
     story += [PageBreak()]
 
     # ---------- RESULTADOS (resumen + gráfico + tabla) ----------
@@ -632,6 +657,16 @@ def generar_pdf_informe(nombre_informe: str,
         stys["Small"]
     ), Spacer(1, 0.3*cm)]
     story.append(_tabla_resultados_flowable(df_par, doc.width))
+    story += [PageBreak()]
+
+    # ---------- DESCRIPCIÓN POR DESCRIPTOR ----------
+    story += [Paragraph("Descripción por descriptor", stys["TitleBig"]), Spacer(1, 0.2*cm)]
+    total_desc = len(df_par)
+    for i, (_, r) in enumerate(df_par.iterrows(), start=1):
+        story += [Paragraph("• " + _descripcion_por_descriptor(r, i, total_desc), stys["Body"]), Spacer(1, 0.12*cm)]
+        # Salto suave cada ~18 para evitar saturar la página
+        if i % 18 == 0 and i != total_desc:
+            story += [PageBreak()]
     story += [PageBreak()]
 
     # ---------- MODALIDADES ----------
@@ -790,7 +825,7 @@ if seleccion:
     with col_inf1:
         gen = st.button("📄 Generar Informe PDF (editor)", type="primary", use_container_width=True, key="btn_inf_editor")
     with col_inf2:
-        st.caption("Incluye: Portada, Resumen + Gráfico + Tabla, Modalidades y Cierre (recomendaciones).")
+        st.caption("Incluye: Portada, Resumen + Gráfico + Tabla, Descripción por descriptor, Modalidades y Cierre.")
 
     if gen:
         if tabla.empty:
@@ -865,8 +900,7 @@ else:
                     st.session_state["msel"] = list(freq_map.keys())
                     st.success(f"Pareto '{nom}' cargado al editor (arriba). Desplázate para editar.")
                 with st.popover("📄 Informe PDF de este Pareto"):
-                    nombre_inf_ind = st.text_input("Nombre del informe", value=f"Pareto — {nom}", key=f"inf_nom_{nom}")
-                    # desgloses para este pareto
+                    nombre_inf_ind = st.text_input("Nombre del informe", value=f"{nom}", key=f"inf_nom_{nom}")
                     desgloses_ind = ui_desgloses(tabla_g["descriptor"].tolist(), key_prefix=f"inf_{nom}")
                     if st.button("Generar PDF", key=f"btn_inf_{nom}"):
                         pdf_bytes = generar_pdf_informe(nombre_inf_ind, tabla_g, desgloses_ind)
@@ -920,7 +954,6 @@ else:
                 key="dl_unificado",
             )
 
-        # ===== Informe PDF Unificado / General =====
         st.markdown("### 🧾 Elaborar Informe PDF (Unificado / General)")
         nombre_inf_unif = st.text_input("Nombre del informe",
                                         value=(titulo_unif or "Pareto Unificado"),
