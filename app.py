@@ -8,7 +8,7 @@
 import io
 import os
 from textwrap import wrap
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -24,13 +24,11 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
     BaseDocTemplate, PageTemplate, Frame,
     Paragraph, Spacer, Image as RLImage, Table, TableStyle,
     PageBreak, NextPageTemplate, KeepInFrame
 )
-from PIL import Image  # noqa: F401 (requerido por reportlab en algunas plataformas)
 
 # ----------------- CONFIG -----------------
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1cf-avzRjtBXcqr69WfrrsTAegm0PMAe8LgjeLpfcS5g/edit?usp=sharing"
@@ -43,10 +41,10 @@ VERDE = "#1B9E77"
 AZUL  = "#2C7FB8"
 TEXTO = "#124559"
 
-# Íconos/portadas esperados (colócalos junto a app.py)
+# Íconos/portadas esperados (exactamente estos nombres, junto a app.py)
 IMG_ICONO_PEQUENO     = "Iconos pequeños.png"         # esquina sup-izq en páginas intermedias
 IMG_PORTADA_GRANDE    = "Icono grande portada.png"    # portada
-IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # portada (si falta el grande)
+IMG_PORTADA_MEDIANO   = "Iconos medianos portada.png" # portada (fallback)
 
 # ============== AJUSTES MATPLOTLIB (legibilidad) ==============
 plt.rcParams.update({
@@ -62,6 +60,7 @@ plt.rcParams.update({
 
 # ============================================================================
 # 1) CATÁLOGO EMBEBIDO
+# (…lista completa sin cambios…)
 # ============================================================================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
@@ -239,7 +238,6 @@ CATALOGO: List[Dict[str, str]] = [
 def _map_descriptor_a_categoria() -> Dict[str, str]:
     df = pd.DataFrame(CATALOGO)
     return dict(zip(df["descriptor"], df["categoria"]))
-
 DESC2CAT = _map_descriptor_a_categoria()
 
 def normalizar_freq_map(freq_map: Dict[str, int]) -> Dict[str, int]:
@@ -312,7 +310,7 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=0, ha="right")
     ax1.set_title(titulo if titulo.strip() else "Pareto — Frecuencia y % acumulado", color=TEXTO)
     ax2 = ax1.twinx()
-    ax2.plot(x, pct_acum, marker="o", linewidth=2, color="#124559")
+    ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
     ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
     if (df_par["segmento_real"] == "80%").any():
         cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
@@ -430,8 +428,19 @@ if st.session_state.get("reset_after_save", False):
     st.session_state["reset_after_save"] = False
 
 # ============================================================================
-# 5) MAPA DE IMÁGENES POR DESCRIPTOR
+# 5) IMÁGENES
 # ============================================================================
+def _image_path_if_exists(path: Optional[str]) -> Optional[str]:
+    if path and os.path.exists(path):
+        return path
+    return None
+
+def _first_existing_path(*candidates: str) -> Optional[str]:
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
 IMG_BY_KEYWORD = {
     "búnker": "Bunker.png",
     "bunker": "Bunker.png",
@@ -442,19 +451,12 @@ IMG_BY_KEYWORD = {
     "venta de drogas": "Venta de drogas.png",
     "violencia intrafamiliar": "Violencia intrafamiliar.png",
 }
-def _find_image_for_descriptor(descriptor: str) -> str | None:
+
+def _find_image_path_for_descriptor(descriptor: str) -> Optional[str]:
     dnorm = descriptor.lower()
     for k, fname in IMG_BY_KEYWORD.items():
         if k in dnorm and os.path.exists(fname):
             return fname
-    return None
-
-def _safe_image_reader(path: str | None) -> ImageReader | None:
-    try:
-        if path and os.path.exists(path):
-            return ImageReader(path)
-    except Exception:
-        return None
     return None
 
 # ============================================================================
@@ -476,10 +478,11 @@ def _page_first(canv, doc):
     pass
 
 def _page_normal(canv, doc):
-    # icono esquina sup-izq
-    ir = _safe_image_reader(IMG_ICONO_PEQUENO)
-    if ir:
-        canv.drawImage(ir, doc.leftMargin, PAGE_H - doc.topMargin + 0.2*cm, width=1.05*cm, height=1.05*cm, mask='auto')
+    # icono esquina sup-izq (si existe)
+    icon_path = _image_path_if_exists(IMG_ICONO_PEQUENO)
+    if icon_path:
+        canv.drawImage(icon_path, doc.leftMargin, PAGE_H - doc.topMargin + 0.2*cm,
+                       width=1.05*cm, height=1.05*cm, mask='auto')
 
 def _page_last(canv, doc):
     # sin icono
@@ -547,7 +550,6 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame) -> Table:
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor(TEXTO)),
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
         ("ALIGN",      (2,1), (-1,-1), "RIGHT"),
-        ("ALIGN",      (0,0), (0,-1), "LEFT"),
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",   (0,0), (-1,0), 10),
         ("FONTSIZE",   (0,1), (-1,-1), 9),
@@ -582,9 +584,9 @@ def generar_pdf_informe(nombre_informe: str,
     story: List = []
 
     # ---------- PORTADA ----------
-    portada_img = _safe_image_reader(IMG_PORTADA_GRANDE) or _safe_image_reader(IMG_PORTADA_MEDIANO)
-    if portada_img:
-        im = RLImage(portada_img, width=8*cm, height=8*cm)
+    portada_path = _first_existing_path(IMG_PORTADA_GRANDE, IMG_PORTADA_MEDIANO)
+    if portada_path:
+        im = RLImage(portada_path, width=8*cm, height=8*cm)
         story += [Spacer(1, 4*cm), KeepInFrame(16*cm, 8.2*cm, [im], hAlign="CENTER"), Spacer(1, 0.5*cm)]
     else:
         story += [Spacer(1, 6.5*cm)]
@@ -601,17 +603,16 @@ def generar_pdf_informe(nombre_informe: str,
 
     # Foto asociada al TOP 1 (si existe)
     if not df_par.empty:
-        top_img = _find_image_for_descriptor(df_par.iloc[0]["descriptor"])
-        ir = _safe_image_reader(top_img)
-        if ir:
-            story += [Spacer(1, 0.3*cm), RLImage(ir, width=5.2*cm, height=5.2*cm, hAlign="RIGHT")]
+        top_img_path = _find_image_path_for_descriptor(df_par.iloc[0]["descriptor"])
+        if top_img_path:
+            story += [Spacer(1, 0.3*cm), RLImage(top_img_path, width=5.2*cm, height=5.2*cm, hAlign="RIGHT")]
 
     story += [PageBreak()]
 
     # ---------- DIAGRAMA PARETO ----------
     story += [Paragraph("Diagrama de Pareto", stys["H1"]), Spacer(1, 0.2*cm)]
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
-    story += [RLImage(ImageReader(io.BytesIO(pareto_png)), width=doc.width, height=8.5*cm)]
+    story += [RLImage(io.BytesIO(pareto_png), width=doc.width, height=8.5*cm)]
     story += [PageBreak()]
 
     # ---------- MODALIDADES ----------
@@ -621,11 +622,11 @@ def generar_pdf_informe(nombre_informe: str,
         pares = [(r.get("Etiqueta",""), float(r.get("%", 0) or 0)) for r in rows]
 
         story += [Paragraph(f"Modalidades de la problemática — {descriptor}", stys["H1"]), Spacer(1, 0.2*cm)]
-        dimg = _safe_image_reader(_find_image_for_descriptor(descriptor))
-        if dimg:
-            story += [RLImage(dimg, width=4.5*cm, height=4.5*cm, hAlign="RIGHT"), Spacer(1, 0.2*cm)]
+        dimg_path = _find_image_path_for_descriptor(descriptor)
+        if dimg_path:
+            story += [RLImage(dimg_path, width=4.5*cm, height=4.5*cm, hAlign="RIGHT"), Spacer(1, 0.2*cm)]
         mod_png = _modalidades_png(descriptor, pares)
-        story += [RLImage(ImageReader(io.BytesIO(mod_png)), width=doc.width, height=8.5*cm), PageBreak()]
+        story += [RLImage(io.BytesIO(mod_png), width=doc.width, height=8.5*cm), PageBreak()]
 
     # ---------- CIERRE (última, sin icono) ----------
     story += [NextPageTemplate("Last"), PageBreak()]
