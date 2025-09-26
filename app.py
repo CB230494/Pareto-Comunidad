@@ -355,7 +355,7 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         chart.set_y_axis({"name": "Frecuencia"})
         chart.set_y2_axis({"name": "Porcentaje acumulado",
                            "min": 0, "max": 1.10, "major_unit": 0.10, "num_format": "0%"})
-        chart.set_title({"name": titulo if titulo.strip() else "Diagrama de Pareto"})
+        chart.set_title({"name": titulo si := titulo.strip() if titulo else "" or "Diagrama de Pareto"})
         chart.set_legend({"position": "bottom"}); chart.set_size({"width": 1180, "height": 420})
         ws.insert_chart("I2", chart)
     return output.getvalue()
@@ -466,7 +466,7 @@ def _page_cover(canv, doc):
     canv.rect(0, PAGE_H - 0.9*cm, PAGE_W, 0.9*cm, fill=1, stroke=0)
 
 def _page_normal(_canv, _doc):
-    pass  # Sin logos/íconos
+    pass
 
 def _page_last(canv, _doc):
     canv.setFillColor(colors.HexColor(TEXTO))
@@ -516,7 +516,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
     return buf.getvalue()
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
-    fracs = [0.18, 0.40, 0.14, 0.08, 0.10, 0.10]  # categoría, descriptor, frecuencia, %, % acum., acum.
+    fracs = [0.18, 0.40, 0.14, 0.08, 0.10, 0.10]
     col_widths = [f * doc_width for f in fracs]
 
     stys = _styles()
@@ -613,7 +613,7 @@ def generar_pdf_informe(nombre_informe: str,
     stys = _styles()
     story: List = []
 
-    # ---------- PORTADA (limpia, sin imagen) ----------
+    # ---------- PORTADA ----------
     story += [NextPageTemplate("Normal")]
     story += [Spacer(1, 2.2*cm)]
     story += [Paragraph(f"Informe de Pareto — {nombre_informe}", stys["CoverTitle"])]
@@ -621,7 +621,7 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
     story += [PageBreak()]
 
-    # ---------- RESULTADOS (resumen + gráfico + tabla) ----------
+    # ---------- RESULTADOS ----------
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.35*cm)]
 
@@ -635,8 +635,7 @@ def generar_pdf_informe(nombre_informe: str,
     ), Spacer(1, 0.3*cm)]
     story.append(_tabla_resultados_flowable(df_par, doc.width))
 
-    # ---------- (SE ELIMINA 'Descripción por descriptor') ----------
-    # Ya no se agrega esa sección. Continuamos directo con Modalidades.
+    # (Se elimina 'Descripción por descriptor')
 
     if desgloses:
         story += [PageBreak()]
@@ -654,7 +653,7 @@ def generar_pdf_informe(nombre_informe: str,
         if i < len(desgloses) - 1:
             story += [PageBreak()]
 
-    # ---------- CIERRE (última) ----------
+    # ---------- CIERRE ----------
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
         Paragraph("Conclusiones y recomendaciones", stys["TitleBig"]),
@@ -897,7 +896,8 @@ else:
         maps_a_unir = [st.session_state["portafolio"][n] for n in nombres]
         titulo_unif = "Pareto General (todos los paretos)"
     elif len(st.session_state.get("sel_unif", [])) >= 2:
-        maps_a_unir = [st.session_state["portafolio"][n] for n en st.session_state["sel_unif"]]
+        # <<< CORRECCIÓN AQUÍ: 'in' en lugar de 'en' >>>
+        maps_a_unir = [st.session_state["portafolio"][n] for n in st.session_state["sel_unif"]]
         titulo_unif = f"Unificado: {', '.join(st.session_state['sel_unif'])}"
     if maps_a_unir:
         combinado = combinar_maps(maps_a_unir)
