@@ -1,13 +1,22 @@
 # app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (sin imágenes externas)
 # ---------------------------------------------------------------------------------
-# Instalar (requirements típicos):
-#   streamlit pandas numpy openpyxl XlsxWriter matplotlib gspread google-auth reportlab Pillow
-# Ejecutar:
+# Requisitos recomendados (requirements.txt):
+#   streamlit
+#   pandas
+#   numpy
+#   openpyxl
+#   XlsxWriter
+#   matplotlib
+#   gspread
+#   google-auth
+#   reportlab
+#   Pillow
+#
+# Ejecuta con:
 #   streamlit run app.py
 # ---------------------------------------------------------------------------------
 
 import io
-import os
 from textwrap import wrap
 from typing import List, Dict, Tuple
 
@@ -57,7 +66,7 @@ plt.rcParams.update({
 })
 
 # ============================================================================
-# 1) CATÁLOGO EMBEBIDO  (lista completa)
+# 1) CATÁLOGO EMBEBIDO (completo)
 # ============================================================================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
@@ -424,21 +433,28 @@ if st.session_state.get("reset_after_save", False):
     st.session_state["reset_after_save"] = False
 
 # ============================================================================
-# 5) PDF (LEGIBLE) — Platypus (sin imágenes externas)
+# 5) PDF (LEGIBLE) — Platypus (sin imágenes externas)  *** PORTADA CORREGIDA ***
 # ============================================================================
 PAGE_W, PAGE_H = A4
 
 def _styles():
     ss = getSampleStyleSheet()
-    ss.add(ParagraphStyle(name="CoverTitle", fontName="Helvetica-Bold",
-                          fontSize=28, textColor=TEXTO, alignment=1, spaceAfter=6))
-    ss.add(ParagraphStyle(name="CoverSubtitle", parent=ss["Normal"], fontSize=12,
-                          textColor=GRIS, alignment=1, spaceAfter=8))
-    ss.add(ParagraphStyle(name="TitleBig", parent=ss["Title"], fontSize=24, textColor=TEXTO, alignment=0, spaceAfter=10))
-    ss.add(ParagraphStyle(name="H1", parent=ss["Heading1"], fontSize=18, textColor=TEXTO, spaceAfter=8))
+    ss.add(ParagraphStyle(
+        name="CoverTitle", fontName="Helvetica-Bold",
+        fontSize=30, leading=36, textColor=TEXTO, alignment=1, spaceAfter=14
+    ))
+    ss.add(ParagraphStyle(
+        name="CoverSubtitle", parent=ss["Normal"], fontSize=12,
+        leading=16, textColor=GRIS, alignment=1, spaceAfter=10
+    ))
+    ss.add(ParagraphStyle(
+        name="TitleBig", parent=ss["Title"], fontSize=24,
+        leading=28, textColor=TEXTO, alignment=0, spaceAfter=10
+    ))
+    ss.add(ParagraphStyle(name="H1", parent=ss["Heading1"], fontSize=18, leading=22, textColor=TEXTO, spaceAfter=8))
     ss.add(ParagraphStyle(name="Body", parent=ss["Normal"], fontSize=11, leading=14, textColor="#111"))
-    ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9.6, textColor=GRIS))
-    ss.add(ParagraphStyle(name="TableHead", parent=ss["Normal"], fontSize=11, textColor=colors.white))
+    ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9.6, leading=12, textColor=GRIS))
+    ss.add(ParagraphStyle(name="TableHead", parent=ss["Normal"], fontSize=11, leading=13, textColor=colors.white))
     return ss
 
 def _page_cover(canv, doc):
@@ -446,8 +462,7 @@ def _page_cover(canv, doc):
     canv.rect(0, PAGE_H - 0.9*cm, PAGE_W, 0.9*cm, fill=1, stroke=0)
 
 def _page_normal(_canv, _doc):
-    # Sin logos/íconos (por petición)
-    pass
+    pass  # Sin logos/íconos
 
 def _page_last(canv, _doc):
     canv.setFillColor(colors.HexColor(TEXTO))
@@ -475,8 +490,8 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     return buf.getvalue()
 
 def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
-    labels = [l for l, _ in data_pairs if str(l).strip()]
-    vals   = [float(p or 0) for _, p in data_pairs if str(_).strip()]
+    labels = [l for l, p in data_pairs if str(l).strip()]
+    vals   = [float(p or 0) for l, p in data_pairs if str(l).strip()]
     if not labels:
         labels, vals = ["Sin datos"], [100.0]
     order = np.argsort(vals)[::-1]
@@ -497,7 +512,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]]) -> bytes:
     return buf.getvalue()
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
-    # Anchos pensados para que ENCABEZADOS no se corten
+    # Anchos para que no se corten encabezados
     fracs = [0.18, 0.40, 0.14, 0.08, 0.10, 0.10]  # categoría, descriptor, frecuencia, %, % acum., acum.
     col_widths = [f * doc_width for f in fracs]
 
@@ -597,7 +612,7 @@ def generar_pdf_informe(nombre_informe: str,
 
     # ---------- PORTADA (limpia, sin imagen) ----------
     story += [NextPageTemplate("Normal")]
-    story += [Spacer(1, 1.2*cm)]
+    story += [Spacer(1, 2.2*cm)]  # margen superior
     story += [Paragraph(f"Informe de Paretos — {nombre_informe}", stys["CoverTitle"])]
     story += [Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["CoverSubtitle"])]
     story += [Spacer(1, 0.6*cm)]
@@ -870,7 +885,6 @@ else:
                     except Exception:
                         st.error("No se pudo eliminar. Intenta de nuevo.")
 
-    # ---------- UNIFICADO ----------
     st.markdown("---"); st.header("🔗 Pareto Unificado (por filtro o general)")
     maps_a_unir = []; titulo_unif = ""
     if unificar_todos and nombres:
