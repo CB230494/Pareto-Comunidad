@@ -594,29 +594,6 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
             f"El resto de modalidades suma <b>{resto:.1f}%</b>. "
             "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
 
-def _descripcion_por_descriptor(row: pd.Series, rank: int, total_desc: int) -> str:
-    """Redacción corta y personalizada por descriptor."""
-    desc = str(row["descriptor"])
-    cat  = str(row["categoria"])
-    freq = int(row["frecuencia"])
-    pct  = float(row["porcentaje"])
-    acum = float(row["pct_acum"])
-    seg  = "núcleo (80%)" if row["segmento_real"] == "80%" else "cola (20%)"
-    tema = _tema_descriptor(desc)
-
-    enfoque = {
-        "drogas": "refuerzos de prevención, patrullajes focalizados y articulación con salud y municipalidad",
-        "delitos contra la propiedad": "controles de oportunidad, patrullajes en horarios críticos y apoyo a víctimas/comercios",
-        "violencia": "protocolos de atención, derivación a redes de apoyo y presencia disuasiva",
-        "condiciones urbanas / entorno": "mejoras del entorno, alumbrado y recuperación de espacios",
-        "seguridad y convivencia": "acciones de convivencia, mediación y trabajo comunitario"
-    }.get(tema, "acciones interinstitucionales")
-
-    return (f"({rank}/{total_desc}) <b>{desc}</b> — categoría: <b>{cat}</b>. "
-            f"Se contabilizan <b>{freq}</b> reportes, equivalentes al <b>{pct:.2f}%</b> "
-            f"({acum:.2f}% acumulado). Forma parte de la <b>{seg}</b> del Pareto. "
-            f"Sugerencias: {enfoque}.")
-
 def generar_pdf_informe(nombre_informe: str,
                         df_par: pd.DataFrame,
                         desgloses: List[Dict]) -> bytes:
@@ -657,17 +634,12 @@ def generar_pdf_informe(nombre_informe: str,
         stys["Small"]
     ), Spacer(1, 0.3*cm)]
     story.append(_tabla_resultados_flowable(df_par, doc.width))
-    story += [PageBreak()]
 
-    # ---------- DESCRIPCIÓN POR DESCRIPTOR ----------
-    story += [Paragraph("Descripción por descriptor", stys["TitleBig"]), Spacer(1, 0.2*cm)]
-    total_desc = len(df_par)
-    for i, (_, r) in enumerate(df_par.iterrows(), start=1):
-        story += [Paragraph("• " + _descripcion_por_descriptor(r, i, total_desc), stys["Body"]), Spacer(1, 0.12*cm)]
-        # Salto suave cada ~18 para evitar saturar la página
-        if i % 18 == 0 and i != total_desc:
-            story += [PageBreak()]
-    story += [PageBreak()]
+    # ---------- (SE ELIMINA 'Descripción por descriptor') ----------
+    # Ya no se agrega esa sección. Continuamos directo con Modalidades.
+
+    if desgloses:
+        story += [PageBreak()]
 
     # ---------- MODALIDADES ----------
     for i, sec in enumerate(desgloses):
@@ -825,7 +797,7 @@ if seleccion:
     with col_inf1:
         gen = st.button("📄 Generar Informe PDF (editor)", type="primary", use_container_width=True, key="btn_inf_editor")
     with col_inf2:
-        st.caption("Incluye: Portada, Resumen + Gráfico + Tabla, Descripción por descriptor, Modalidades y Cierre.")
+        st.caption("Incluye: Portada, Resumen + Gráfico + Tabla, Modalidades (si agregas) y Cierre.")
 
     if gen:
         if tabla.empty:
@@ -925,7 +897,7 @@ else:
         maps_a_unir = [st.session_state["portafolio"][n] for n in nombres]
         titulo_unif = "Pareto General (todos los paretos)"
     elif len(st.session_state.get("sel_unif", [])) >= 2:
-        maps_a_unir = [st.session_state["portafolio"][n] for n in st.session_state["sel_unif"]]
+        maps_a_unir = [st.session_state["portafolio"][n] for n en st.session_state["sel_unif"]]
         titulo_unif = f"Unificado: {', '.join(st.session_state['sel_unif'])}"
     if maps_a_unir:
         combinado = combinar_maps(maps_a_unir)
