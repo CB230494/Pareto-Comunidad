@@ -1,4 +1,4 @@
-# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (con gráfico PÍLDORA)
+# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (con PÍLDORA)
 # ---------------------------------------------------------------------------------
 # Ejecuta con:
 #   streamlit run app.py
@@ -27,6 +27,7 @@ from reportlab.platypus import (
     Paragraph, Spacer, Image as RLImage, Table, TableStyle,
     PageBreak, NextPageTemplate
 )
+from reportlab.platypus.flowables import KeepTogether
 from datetime import datetime
 
 # ----------------- CONFIG -----------------
@@ -422,7 +423,7 @@ if st.session_state.get("reset_after_save", False):
     st.session_state["reset_after_save"] = False
 
 # ============================================================================
-# 5) PDF (LEGIBLE) — Platypus (sin imágenes externas) — PORTADA CORREGIDA
+# 5) PDF (LEGIBLE) — Platypus (sin imágenes externas) — PORTADA/TÍTULOS
 # ============================================================================
 PAGE_W, PAGE_H = A4
 
@@ -437,14 +438,19 @@ def _styles():
         leading=16, textColor=GRIS, alignment=1, spaceAfter=10
     ))
     ss.add(ParagraphStyle(
-        name="CoverDate", parent=ss["Normal"], fontSize=14,
-        leading=18, textColor=TEXTO, alignment=0, spaceBefore=8
+        name="CoverDate", parent=ss["Normal"], fontSize=15,
+        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8   # <- fecha centrada y azul
     ))
     ss.add(ParagraphStyle(
         name="TitleBig", parent=ss["Title"], fontSize=24,
         leading=28, textColor=TEXTO, alignment=0, spaceAfter=10
     ))
+    ss.add(ParagraphStyle(
+        name="TitleBigCenter", parent=ss["Title"], fontSize=24,
+        leading=28, textColor=TEXTO, alignment=1, spaceAfter=10
+    ))
     ss.add(ParagraphStyle(name="H1", parent=ss["Heading1"], fontSize=18, leading=22, textColor=TEXTO, spaceAfter=8))
+    ss.add(ParagraphStyle(name="H1Center", parent=ss["Heading1"], fontSize=18, leading=22, textColor=TEXTO, spaceAfter=8, alignment=1))
     ss.add(ParagraphStyle(name="Body", parent=ss["Normal"], fontSize=11, leading=14, textColor="#111"))
     ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9.6, leading=12, textColor=GRIS))
     ss.add(ParagraphStyle(name="TableHead", parent=ss["Normal"], fontSize=11, leading=13, textColor=colors.white))
@@ -731,23 +737,28 @@ def generar_pdf_informe(nombre_informe: str,
     story.append(_tabla_resultados_flowable(df_par, doc.width))
     story += [Spacer(1, 0.25*cm)]
 
-    # ---------- MODALIDADES (fluyen sin saltos por sección) ----------
+    # ---------- MODALIDADES (título + texto + gráfico SIEMPRE juntos) ----------
     for sec in desgloses:
         descriptor = sec.get("descriptor", "").strip()
         rows = sec.get("rows", [])
         chart_kind = sec.get("chart", "barh")
         pares = [(r.get("Etiqueta",""), float(r.get("%", 0) or 0)) for r in rows]
 
-        story += [Spacer(1, 0.4*cm)]
-        story += [Paragraph(f"Modalidades de la problemática — {descriptor}", stys["TitleBig"]), Spacer(1, 0.1*cm)]
-        story += [Paragraph(_texto_modalidades(descriptor, pares), stys["Small"]), Spacer(1, 0.2*cm)]
-        mod_png = _modalidades_png(descriptor or "Modalidades", pares, kind=chart_kind)
-        story += [RLImage(io.BytesIO(mod_png), width=doc.width, height=8.5*cm)]
+        bloque = [
+            Spacer(1, 0.4*cm),
+            Paragraph(f"Modalidades de la problemática — {descriptor}", stys["TitleBig"]),
+            Spacer(1, 0.1*cm),
+            Paragraph(_texto_modalidades(descriptor, pares), stys["Small"]),
+            Spacer(1, 0.2*cm),
+            RLImage(io.BytesIO(_modalidades_png(descriptor or 'Modalidades', pares, kind=chart_kind)),
+                    width=doc.width, height=8.5*cm),
+        ]
+        story += [KeepTogether(bloque)]
 
     # ---------- CIERRE ----------
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
-        Paragraph("Conclusiones y recomendaciones", stys["TitleBig"]),
+        Paragraph("Conclusiones y recomendaciones", stys["TitleBigCenter"]),
         Spacer(1, 0.2*cm),
         Paragraph(
             "• Priorizar intervenciones sobre los descriptores que conforman el <b>80% acumulado</b>. "
@@ -756,9 +767,9 @@ def generar_pdf_informe(nombre_informe: str,
             "• Monitorear indicadores mensualmente para evaluar la efectividad de las acciones.",
             stys["Body"]
         ),
-        Spacer(1, 0.6*cm),
-        Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H1"]),
-        Paragraph("Sembremos Seguridad", stys["Small"]),
+        Spacer(1, 0.8*cm),
+        Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H1Center"]),
+        Paragraph("Sembremos Seguridad", stys["H1Center"]),  # <- centrado
     ]
 
     doc.build(story)
@@ -766,9 +777,12 @@ def generar_pdf_informe(nombre_informe: str,
 
 # === Helpers UI formulario de desgloses (con selector de tipo de gráfico) ===
 def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
-    st.caption("Opcional: agrega secciones de ‘Modalidades’ (hasta 3). Cada sección admite hasta 10 filas (Etiqueta + %).")
+    st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
+    max_secs = max(0, len(descriptor_list))  # <- sin límite duro; hasta la cantidad de descriptores
+    default_val = 1 if max_secs > 0 else 0
     n_secs = st.number_input("Cantidad de secciones de Modalidades",
-                             min_value=0, max_value=3, value=1, step=1, key=f"{key_prefix}_nsecs")
+                             min_value=0, max_value=max_secs, value=default_val, step=1,
+                             key=f"{key_prefix}_nsecs")
     desgloses: List[Dict] = []
     for i in range(n_secs):
         with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
@@ -976,8 +990,6 @@ else:
                     st.session_state["freq_map"] = dict(freq_map)
                     st.session_state["msel"] = list(freq_map.keys())
                     st.success(f"Pareto '{nom}' cargado al editor (arriba). Desplázate para editar.")
-                # Popover requiere Streamlit 1.31+. Si no existe en tu versión, puedes
-                # reemplazar el bloque del popover por un simple expander.
                 try:
                     pop = st.popover("📄 Informe PDF de este Pareto")
                 except Exception:
@@ -1053,4 +1065,3 @@ else:
             )
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
-
