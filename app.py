@@ -718,7 +718,7 @@ def generar_pdf_informe(nombre_informe: str,
     story += [NextPageTemplate("Normal")]
     story += [Spacer(1, 2.2*cm)]
     story += [Paragraph(f"Informe de Pareto — {nombre_informe}", stys["CoverTitle"])]
-    story += [Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["CoverSubtitle"])]
+    story += [Paragraph("Estrategia Sembremos Seguridad", stys["CoverSubtitle"])]
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
     story += [PageBreak()]
 
@@ -1065,3 +1065,4 @@ else:
             )
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
