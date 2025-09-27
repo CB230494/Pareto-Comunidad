@@ -492,7 +492,6 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
     if not labels:
         labels, vals = ["Sin datos"], [100.0]
 
-    # Ordenar descendente
     order = np.argsort(vals)[::-1]
     labels = [labels[i] for i in order]
     vals   = [vals[i]   for i in order]
@@ -547,7 +546,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             w = max(0.0, float(v))
             ax.barh(0, w, left=left, color=colors_seq[i])
             if w >= 7:
-                ax.text(left + w/2, 0, f"{lab}\n{w:.1f}%", va="center", ha="center", fontsize=9, color="white")
+                ax.text(left + w/2, 0, f"{lab}\n{v:.1f}%", va="center", ha="center", fontsize=9, color="white")
             left += w
         ax.set_xlim(0, max(100, sum(vals)))
         ax.set_yticks([]); ax.set_xlabel("Porcentaje (composición)")
@@ -555,18 +554,16 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.grid(False)
 
     elif kind == "pill":
-        # Estilo "píldora"
         fig_height = 0.9 + n*0.85
         fig, ax = plt.subplots(figsize=(10.8, fig_height))
         ax.set_xlim(0, 100); ax.set_ylim(0, n)
         ax.axis("off")
-        track_h = 0.72    # alto de la píldora
+        track_h = 0.72
         round_r = track_h/2
 
         for i, (lab, v) in enumerate(zip(labels, vals)):
             y = n - 1 - i + (1 - track_h)/2
 
-            # Carril de fondo (píldora)
             track = FancyBboxPatch(
                 (0.8, y), 98.4, track_h,
                 boxstyle=f"round,pad=0,rounding_size={round_r}",
@@ -574,7 +571,6 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             )
             ax.add_patch(track)
 
-            # Progreso (ancho proporcional al %)
             prog_w = max(0.001, min(98.4, float(v)))
             prog = FancyBboxPatch(
                 (0.8, y), prog_w, track_h,
@@ -583,11 +579,9 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             )
             ax.add_patch(prog)
 
-            # “Burbujas” izquierda (sombra + color)
             ax.add_patch(Circle((0.8 + round_r*0.8, y + track_h/2), round_r*0.9, color="#a3a3a3", alpha=0.6))
             ax.add_patch(Circle((0.8 + round_r*0.6, y + track_h/2), round_r*0.9, color=AZUL, alpha=0.9))
 
-            # Badge del porcentaje
             badge_w = 12.0; badge_h = track_h*0.8
             badge_x = 5.0;  badge_y = y + (track_h - badge_h)/2
             badge = FancyBboxPatch(
@@ -598,7 +592,6 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             ax.add_patch(badge)
             ax.text(badge_x + badge_w/2, y + track_h/2, f"{v:.1f}%", ha="center", va="center", fontsize=10)
 
-            # Etiqueta
             ax.text(badge_x + badge_w + 3.0, y + track_h/2, lab, va="center", ha="left",
                     fontsize=12, color="#0f172a")
 
@@ -646,19 +639,6 @@ def _resumen_texto(df_par: pd.DataFrame) -> str:
             f"({float(top['porcentaje']):.2f}%). El punto de corte del <b>80%</b> se alcanza con "
             f"<b>{idx80}</b> descriptores, útiles para la priorización operativa.")
 
-def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
-    pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
-    pares_orden = sorted(pares_filtrados, key=lambda x: x[1], reverse=True)
-    tema = _tema_descriptor(descriptor)
-    if not pares_orden:
-        return (f"Para <b>{descriptor}</b> (ámbito: <b>{tema}</b>) no se reportaron modalidades con porcentaje. "
-                "Se sugiere recolectar esta información para focalizar acciones.")
-    top_txt = "; ".join([f"<b>{l}</b> ({p:.1f}%)" for l, p in pares_orden[:2]])
-    # Nota: se eliminó la frase “El resto de modalidades suma …”
-    return (f"En <b>{descriptor</b>} (ámbito: <b>{tema}</b>) destacan: {top_txt}. "
-            "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
-
-# >>> FIX de f-string anterior (corrige llaves)
 def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
     pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
     pares_orden = sorted(pares_filtrados, key=lambda x: x[1], reverse=True)
@@ -996,7 +976,13 @@ else:
                     st.session_state["freq_map"] = dict(freq_map)
                     st.session_state["msel"] = list(freq_map.keys())
                     st.success(f"Pareto '{nom}' cargado al editor (arriba). Desplázate para editar.")
-                with st.popover("📄 Informe PDF de este Pareto"):
+                # Popover requiere Streamlit 1.31+. Si no existe en tu versión, puedes
+                # reemplazar el bloque del popover por un simple expander.
+                try:
+                    pop = st.popover("📄 Informe PDF de este Pareto")
+                except Exception:
+                    pop = st.expander("📄 Informe PDF de este Pareto", expanded=False)
+                with pop:
                     nombre_inf_ind = st.text_input("Nombre del informe", value=f"{nom}", key=f"inf_nom_{nom}")
                     desgloses_ind = ui_desgloses(tabla_g["descriptor"].tolist(), key_prefix=f"inf_{nom}")
                     if st.button("Generar PDF", key=f"btn_inf_{nom}"):
@@ -1067,3 +1053,4 @@ else:
             )
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
