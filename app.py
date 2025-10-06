@@ -788,7 +788,7 @@ def generar_pdf_informe(nombre_informe: str,
         "Este informe presenta un análisis tipo <b>Pareto (80/20)</b> sobre los descriptores seleccionados. "
         "El objetivo es identificar los elementos que concentran la mayor parte de los hechos reportados para apoyar la "
         "priorización operativa y la toma de decisiones. El documento incluye el gráfico de Pareto, un cuadro "
-        "resumido con frecuencia y porcentaje por descriptor, y —al final— una sección de conclusiones y recomendaciones.",
+        "resumido con frecuencia y porcentaje por descriptor, y al final una sección de conclusiones y recomendaciones.",
         stys["Body"]
     ), Spacer(1, 0.35*cm)]
 
@@ -1165,5 +1165,6 @@ else:
             "Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' "
             "para habilitar el unificado."
         )
+
 
 
