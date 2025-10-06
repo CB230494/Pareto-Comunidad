@@ -1,3 +1,8 @@
+# ============================================================================
+# ============================== PARTE 1/10 =================================
+# ============ Encabezado, imports, config y estilos Matplotlib =============
+# ============================================================================
+
 # app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (con PÍLDORA)
 # ---------------------------------------------------------------------------------
 # Ejecuta con:
@@ -53,10 +58,11 @@ plt.rcParams.update({
     "axes.grid": True,
     "grid.alpha": 0.25,
 })
+# ============================================================================
+# ============================== PARTE 2/10 =================================
+# ========================= Catálogo embebido (CSV) =========================
+# ============================================================================
 
-# ============================================================================
-# 1) CATÁLOGO EMBEBIDO
-# ============================================================================
 CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Abandono de personas (menor de edad, adulto mayor o con capacidades diferentes)"},
     {"categoria": "Delito", "descriptor": "Abigeato (robo y destace de ganado)"},
@@ -226,10 +232,11 @@ CATALOGO: List[Dict[str, str]] = [
     {"categoria": "Delito", "descriptor": "Robo de ganado y agrícola"},
     {"categoria": "Delito", "descriptor": "Robo de equipo agrícola"},
 ]
+# ============================================================================
+# ============================== PARTE 3/10 =================================
+# ====================== Utilidades base y cálculo Pareto ====================
+# ============================================================================
 
-# ============================================================================
-# 2) UTILIDADES BASE
-# ============================================================================
 def _map_descriptor_a_categoria() -> Dict[str, str]:
     df = pd.DataFrame(CATALOGO)
     return dict(zip(df["descriptor"], df["categoria"]))
@@ -288,6 +295,10 @@ def _colors_for_segments(segments: List[str]) -> List[str]:
 
 def _wrap_labels(labels: List[str], width: int = 22) -> List[str]:
     return ["\n".join(wrap(str(t), width=width)) for t in labels]
+# ============================================================================
+# ============================== PARTE 4/10 =================================
+# ====== Gráfico Pareto (UI) + Exportación Excel con gráfico combinado ======
+# ============================================================================
 
 def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     if df_par.empty:
@@ -302,8 +313,10 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
-    ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=0, ha="right")
+    # --- CAMBIO: etiquetas diagonales 45° para mejor lectura ---
+    ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=45, ha="right")
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
+
     ax2 = ax1.twinx()
     ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
     ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
@@ -349,10 +362,11 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         chart.set_legend({"position": "bottom"}); chart.set_size({"width": 1180, "height": 420})
         ws.insert_chart("I2", chart)
     return output.getvalue()
+# ============================================================================
+# ============================== PARTE 5/10 =================================
+# ======================== Conectores Google Sheets (gspread) ================
+# ============================================================================
 
-# ============================================================================
-# 3) GOOGLE SHEETS HELPERS
-# ============================================================================
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
 
 def _gc():
@@ -403,10 +417,12 @@ def sheets_guardar_pareto(nombre: str, freq_map: Dict[str, int], sobrescribir: b
         if others: ws.append_rows(others, value_input_option="RAW")
     rows_new = [[nombre, d, int(f)] for d, f in normalizar_freq_map(freq_map).items()]
     if rows_new: ws.append_rows(rows_new, value_input_option="RAW")
+# ============================================================================
+# ============================== PARTE 6/10 =================================
+# =================== Estado de sesión + Estilos básicos PDF =================
+# ============================================================================
 
-# ============================================================================
-# 4) ESTADO DE SESIÓN
-# ============================================================================
+# ---- Estado de sesión ----
 st.session_state.setdefault("freq_map", {})
 st.session_state.setdefault("portafolio", {})
 st.session_state.setdefault("msel", [])
@@ -422,9 +438,7 @@ if st.session_state.get("reset_after_save", False):
     st.session_state.pop("editor_freq", None)
     st.session_state["reset_after_save"] = False
 
-# ============================================================================
-# 5) PDF (LEGIBLE) — Platypus (sin imágenes externas) — PORTADA/TÍTULOS
-# ============================================================================
+# ---- Estilos PDF / páginas ----
 PAGE_W, PAGE_H = A4
 
 def _styles():
@@ -439,7 +453,7 @@ def _styles():
     ))
     ss.add(ParagraphStyle(
         name="CoverDate", parent=ss["Normal"], fontSize=15,
-        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8   # <- fecha centrada y azul
+        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8   # fecha centrada
     ))
     ss.add(ParagraphStyle(
         name="TitleBig", parent=ss["Title"], fontSize=24,
@@ -466,6 +480,10 @@ def _page_normal(_canv, _doc):
 def _page_last(canv, _doc):
     canv.setFillColor(colors.HexColor(TEXTO))
     canv.rect(0, 0, PAGE_W, 0.9*cm, fill=1, stroke=0)
+# ============================================================================
+# ============================== PARTE 7/10 =================================
+# ============ Imágenes para PDF (Pareto/Modalidades) y textos helper =======
+# ============================================================================
 
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     x        = np.arange(len(df_par))
@@ -476,7 +494,8 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
-    ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=0, ha="right")
+    # --- CAMBIO: etiquetas diagonales 45° para el PDF ---
+    ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=45, ha="right")
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
     ax2 = ax1.twinx()
     ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
@@ -655,6 +674,10 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
     top_txt = "; ".join([f"<b>{l}</b> ({p:.1f}%)" for l, p in pares_orden[:2]])
     return (f"En <b>{descriptor}</b> (ámbito: <b>{tema}</b>) destacan: {top_txt}. "
             "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
+# ============================================================================
+# ============================== PARTE 8/10 =================================
+# ========= Tabla PDF, generador de Informe PDF y UI de desgloses ===========
+# ============================================================================
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     fracs = [0.18, 0.40, 0.14, 0.08, 0.10, 0.10]
@@ -769,7 +792,7 @@ def generar_pdf_informe(nombre_informe: str,
         ),
         Spacer(1, 0.8*cm),
         Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H1Center"]),
-        Paragraph("Sembremos Seguridad", stys["H1Center"]),  # <- centrado
+        Paragraph("Sembremos Seguridad", stys["H1Center"]),  # centrado
     ]
 
     doc.build(story)
@@ -778,7 +801,7 @@ def generar_pdf_informe(nombre_informe: str,
 # === Helpers UI formulario de desgloses (con selector de tipo de gráfico) ===
 def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
-    max_secs = max(0, len(descriptor_list))  # <- sin límite duro; hasta la cantidad de descriptores
+    max_secs = max(0, len(descriptor_list))  # sin límite duro; hasta la cantidad de descriptores
     default_val = 1 if max_secs > 0 else 0
     n_secs = st.number_input("Cantidad de secciones de Modalidades",
                              min_value=0, max_value=max_secs, value=default_val, step=1,
@@ -818,10 +841,11 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                                   "rows": de.to_dict(orient="records"),
                                   "chart": chart_kind})
     return desgloses
+# ============================================================================
+# ============================== PARTE 9/10 =================================
+# ======================= UI principal (Editor Pareto/Guardado) ==============
+# ============================================================================
 
-# ============================================================================
-# 6) UI PRINCIPAL (Editor Pareto)
-# ============================================================================
 st.title("Pareto de Descriptores")
 
 c_t1, c_t2, c_t3 = st.columns([2,1,1])
@@ -934,10 +958,10 @@ if seleccion:
 
 else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
+# ============================================================================ #
+# 🧩 PARTE 10 — PORTAFOLIO, UNIFICADO Y DESCARGAS
+# ============================================================================ #
 
-# ============================================================================
-# 7) PORTAFOLIO, UNIFICADO Y DESCARGAS
-# ============================================================================
 st.markdown("---")
 st.header("📁 Portafolio de Paretos (guardados)")
 
@@ -946,14 +970,19 @@ if not st.session_state["portafolio"]:
 else:
     st.subheader("Selecciona paretos para Unificar")
     nombres = sorted(st.session_state["portafolio"].keys())
-    sel_unif = st.multiselect("Elige 2 o más paretos para combinar (o usa el botón de 'Unificar todos')",
-                              options=nombres, default=[], key="sel_unif")
+    sel_unif = st.multiselect(
+        "Elige 2 o más paretos para combinar (o usa el botón de 'Unificar todos')",
+        options=nombres, default=[], key="sel_unif"
+    )
 
-    c_unif1, c_unif2 = st.columns([1,1])
-    with c_unif1: unificar_todos = st.button("🔗 Unificar TODOS los paretos guardados")
-    with c_unif2: st.caption(f"Total de paretos guardados: **{len(nombres)}**")
+    c_unif1, c_unif2 = st.columns([1, 1])
+    with c_unif1:
+        unificar_todos = st.button("🔗 Unificar TODOS los paretos guardados")
+    with c_unif2:
+        st.caption(f"Total de paretos guardados: **{len(nombres)}**")
 
     st.markdown("### Paretos guardados")
+
     for nom in nombres:
         freq_map = st.session_state["portafolio"][nom]
         meta = info_pareto(freq_map)
@@ -961,28 +990,29 @@ else:
             df_base = df_desde_freq_map(freq_map)
             tabla_g = calcular_pareto(df_base)
 
-            mostrar_g = tabla_g.copy()[["categoria","descriptor","frecuencia","porcentaje","pct_acum","acumulado","segmento"]]
-            mostrar_g = mostrar_g.rename(columns={"pct_acum":"porcentaje acumulado"})
+            mostrar_g = tabla_g.copy()[["categoria", "descriptor", "frecuencia",
+                                        "porcentaje", "pct_acum", "acumulado", "segmento"]]
+            mostrar_g = mostrar_g.rename(columns={"pct_acum": "porcentaje acumulado"})
             if not mostrar_g.empty:
                 mostrar_g["porcentaje"] = mostrar_g["porcentaje"].map(lambda x: f"{x:.2f}%")
                 mostrar_g["porcentaje acumulado"] = mostrar_g["porcentaje acumulado"].map(lambda x: f"{x:.2f}%")
 
-
-            cc1, cc2, cc3 = st.columns([1,1,1])
+            cc1, cc2, cc3 = st.columns([1, 1, 1])
             with cc1:
                 if not mostrar_g.empty:
                     st.dataframe(mostrar_g, use_container_width=True, hide_index=True)
                 else:
                     st.info("Este pareto no tiene frecuencias > 0.")
             with cc2:
-                st.markdown("**Gráfico**"); dibujar_pareto(tabla_g, f"Pareto — {nom}")
+                st.markdown("**Gráfico**")
+                dibujar_pareto(tabla_g, f"Pareto — {nom}")
             with cc3:
                 st.markdown("**Acciones**")
                 if not tabla_g.empty:
                     st.download_button(
                         "⬇️ Excel de este Pareto",
                         data=exportar_excel_con_grafico(tabla_g, f"Pareto — {nom}"),
-                        file_name=f"pareto_{nom.lower().replace(' ','_')}.xlsx",
+                        file_name=f"pareto_{nom.lower().replace(' ', '_')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key=f"dl_{nom}",
                     )
@@ -990,10 +1020,12 @@ else:
                     st.session_state["freq_map"] = dict(freq_map)
                     st.session_state["msel"] = list(freq_map.keys())
                     st.success(f"Pareto '{nom}' cargado al editor (arriba). Desplázate para editar.")
+
                 try:
                     pop = st.popover("📄 Informe PDF de este Pareto")
                 except Exception:
                     pop = st.expander("📄 Informe PDF de este Pareto", expanded=False)
+
                 with pop:
                     nombre_inf_ind = st.text_input("Nombre del informe", value=f"{nom}", key=f"inf_nom_{nom}")
                     desgloses_ind = ui_desgloses(tabla_g["descriptor"].tolist(), key_prefix=f"inf_{nom}")
@@ -1002,10 +1034,11 @@ else:
                         st.download_button(
                             "⬇️ Descargar PDF",
                             data=pdf_bytes,
-                            file_name=f"informe_{nom.lower().replace(' ','_')}.pdf",
+                            file_name=f"informe_{nom.lower().replace(' ', '_')}.pdf",
                             mime="application/pdf",
                             key=f"dl_inf_{nom}",
                         )
+
                 if st.button("🗑️ Eliminar de la sesión", key=f"del_{nom}"):
                     try:
                         del st.session_state["portafolio"][nom]
@@ -1014,24 +1047,32 @@ else:
                     except Exception:
                         st.error("No se pudo eliminar. Intenta de nuevo.")
 
-    st.markdown("---"); st.header("🔗 Pareto Unificado (por filtro o general)")
-    maps_a_unir = []; titulo_unif = ""
+    # ============================= UNIFICADO =================================
+    st.markdown("---")
+    st.header("🔗 Pareto Unificado (por filtro o general)")
+    maps_a_unir = []
+    titulo_unif = ""
+
     if unificar_todos and nombres:
         maps_a_unir = [st.session_state["portafolio"][n] for n in nombres]
         titulo_unif = "Pareto General (todos los paretos)"
     elif len(st.session_state.get("sel_unif", [])) >= 2:
         maps_a_unir = [st.session_state["portafolio"][n] for n in st.session_state["sel_unif"]]
         titulo_unif = f"Unificado: {', '.join(st.session_state['sel_unif'])}"
+
     if maps_a_unir:
         combinado = combinar_maps(maps_a_unir)
         df_unif = df_desde_freq_map(combinado)
         tabla_unif = calcular_pareto(df_unif)
-        mostrar_u = tabla_unif.copy()[["categoria","descriptor","frecuencia","porcentaje","pct_acum","acumulado","segmento"]]
-        mostrar_u = mostrar_u.rename(columns={"pct_acum":"porcentaje acumulado"})
+
+        mostrar_u = tabla_unif.copy()[["categoria", "descriptor", "frecuencia",
+                                       "porcentaje", "pct_acum", "acumulado", "segmento"]]
+        mostrar_u = mostrar_u.rename(columns={"pct_acum": "porcentaje acumulado"})
         if not mostrar_u.empty:
             mostrar_u["porcentaje"] = mostrar_u["porcentaje"].map(lambda x: f"{x:.2f}%")
             mostrar_u["porcentaje acumulado"] = mostrar_u["porcentaje acumulado"].map(lambda x: f"{x:.2f}%")
-        cu1, cu2 = st.columns([1,1], gap="large")
+
+        cu1, cu2 = st.columns([1, 1], gap="large")
         with cu1:
             st.markdown("**Tabla Unificada**")
             if not mostrar_u.empty:
@@ -1039,7 +1080,9 @@ else:
             else:
                 st.info("Sin datos > 0 en la combinación seleccionada.")
         with cu2:
-            st.markdown("**Gráfico Unificado**"); dibujar_pareto(tabla_unif, titulo_unif or "Pareto Unificado")
+            st.markdown("**Gráfico Unificado**")
+            dibujar_pareto(tabla_unif, titulo_unif or "Pareto Unificado")
+
         if not tabla_unif.empty:
             st.download_button(
                 "⬇️ Descargar Excel del Pareto Unificado",
@@ -1049,22 +1092,27 @@ else:
                 key="dl_unificado",
             )
 
+        # ===== Informe PDF Unificado =====
         st.markdown("### 🧾 Elaborar Informe PDF (Unificado / General)")
-        nombre_inf_unif = st.text_input("Nombre del informe",
-                                        value=(titulo_unif or "Pareto Unificado"),
-                                        key="inf_unif_nombre")
+        nombre_inf_unif = st.text_input(
+            "Nombre del informe",
+            value=(titulo_unif or "Pareto Unificado"),
+            key="inf_unif_nombre"
+        )
         desgloses_unif = ui_desgloses(tabla_unif["descriptor"].tolist(), key_prefix="unif")
+
         if st.button("📄 Generar Informe PDF (unificado)", key="btn_inf_unif"):
             pdf_bytes = generar_pdf_informe(nombre_inf_unif, tabla_unif, desgloses_unif)
             st.download_button(
                 "⬇️ Descargar Informe PDF",
                 data=pdf_bytes,
-                file_name=f"informe_{(titulo_unif or 'Pareto Unificado').lower().replace(' ','_')}.pdf",
+                file_name=f"informe_{(titulo_unif or 'Pareto Unificado').lower().replace(' ', '_')}.pdf",
                 mime="application/pdf",
                 key="dl_inf_unif",
             )
+
     else:
-        st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
-
-
-
+        st.info(
+            "Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' "
+            "para habilitar el unificado."
+        )
