@@ -680,9 +680,26 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
 # ============================================================================
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
+    # Fracciones de ancho por columna (mantengo tus valores)
     fracs = [0.18, 0.40, 0.14, 0.08, 0.10, 0.10]
     col_widths = [f * doc_width for f in fracs]
+
     stys = _styles()
+
+    # --- Estilo LOCAL para celdas con salto de línea automático
+    from reportlab.lib.styles import ParagraphStyle
+    cell_style = ParagraphStyle(
+        name="CellWrap",
+        parent=stys["Normal"],
+        fontSize=9.6,
+        leading=12,
+        textColor="#111111",
+        wordWrap="CJK",     # <- permite corte por palabras/caracteres si es necesario
+        spaceBefore=0,
+        spaceAfter=0,
+    )
+
+    # Encabezado
     head = [
         Paragraph("Categoría", stys["TableHead"]),
         Paragraph("Descriptor", stys["TableHead"]),
@@ -691,32 +708,47 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         Paragraph("% acum.", stys["TableHead"]),
         Paragraph("Acum.", stys["TableHead"]),
     ]
+
     data = [head]
+
+    # Filas (usar Paragraph en columnas textuales para habilitar el wrap)
     for _, r in df_par.iterrows():
+        categoria = Paragraph(str(r["categoria"]), cell_style)
+        descriptor = Paragraph(str(r["descriptor"]), cell_style)  # <- cambio clave
         data.append([
-            str(r["categoria"]),
-            str(r["descriptor"]),
+            categoria,
+            descriptor,
             int(r["frecuencia"]),
             f'{float(r["porcentaje"]):.2f}%',
             f'{float(r["pct_acum"]):.2f}%',
             int(r["acumulado"]),
         ])
+
+    # Construcción de la tabla
     t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     style = TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor(TEXTO)),
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
-        ("ALIGN",      (2,1), (-1,-1), "RIGHT"),
+
+        # Alineaciones: textos a la izquierda, números a la derecha
+        ("ALIGN", (0,1), (1,-1), "LEFT"),
+        ("ALIGN", (2,1), (-1,-1), "RIGHT"),
+
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",   (0,0), (-1,0), 11),
         ("FONTSIZE",   (0,1), (-1,-1), 9.6),
-        ("LEFTPADDING",(0,0), (-1,-1), 6),
+
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
         ("RIGHTPADDING",(0,0), (-1,-1), 6),
+        ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
+
+        # Zebrados y rejilla ligera
         ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.whitesmoke, colors.Color(0.97,0.97,0.97)]),
-        ("GRID",       (0,0), (-1,-1), 0.25, colors.lightgrey),
-        ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
+        ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
     ])
     t.setStyle(style)
     return t
+
 
 def generar_pdf_informe(nombre_informe: str,
                         df_par: pd.DataFrame,
@@ -798,6 +830,7 @@ def generar_pdf_informe(nombre_informe: str,
     doc.build(story)
     return buf.getvalue()
 
+
 # === Helpers UI formulario de desgloses (con selector de tipo de gráfico) ===
 def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
@@ -841,6 +874,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                                   "rows": de.to_dict(orient="records"),
                                   "chart": chart_kind})
     return desgloses
+
 # ============================================================================
 # ============================== PARTE 9/10 =================================
 # ======================= UI principal (Editor Pareto/Guardado) ==============
@@ -1116,3 +1150,4 @@ else:
             "Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' "
             "para habilitar el unificado."
         )
+
