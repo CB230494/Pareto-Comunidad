@@ -680,13 +680,17 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
 # ============================================================================
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
-    # Fracciones de ancho por columna (mantengo tus valores)
-    fracs = [0.18, 0.40, 0.14, 0.08, 0.10, 0.10]
+    """
+    Cuadro simplificado: solo Descriptor, Frecuencia y %.
+    Incluye una fila final con el 'Total de respuestas tratadas'.
+    """
+    # Anchos: Descriptor más amplio para permitir wraps
+    fracs = [0.62, 0.20, 0.18]  # Descriptor, Frecuencia, %
     col_widths = [f * doc_width for f in fracs]
 
     stys = _styles()
 
-    # --- Estilo LOCAL para celdas con salto de línea automático
+    # Estilo de celda con ajuste de línea
     from reportlab.lib.styles import ParagraphStyle
     cell_style = ParagraphStyle(
         name="CellWrap",
@@ -694,57 +698,58 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         fontSize=9.6,
         leading=12,
         textColor="#111111",
-        wordWrap="CJK",     # <- permite corte por palabras/caracteres si es necesario
+        wordWrap="CJK",
         spaceBefore=0,
         spaceAfter=0,
     )
 
-    # Encabezado
+    # Encabezado (3 columnas)
     head = [
-        Paragraph("Categoría", stys["TableHead"]),
         Paragraph("Descriptor", stys["TableHead"]),
         Paragraph("Frecuencia", stys["TableHead"]),
         Paragraph("%", stys["TableHead"]),
-        Paragraph("% acum.", stys["TableHead"]),
-        Paragraph("Acum.", stys["TableHead"]),
     ]
-
     data = [head]
 
-    # Filas (usar Paragraph en columnas textuales para habilitar el wrap)
+    # Filas de datos
+    total_respuestas = int(df_par["frecuencia"].sum()) if not df_par.empty else 0
     for _, r in df_par.iterrows():
-        categoria = Paragraph(str(r["categoria"]), cell_style)
-        descriptor = Paragraph(str(r["descriptor"]), cell_style)  # <- cambio clave
-        data.append([
-            categoria,
-            descriptor,
-            int(r["frecuencia"]),
-            f'{float(r["porcentaje"]):.2f}%',
-            f'{float(r["pct_acum"]):.2f}%',
-            int(r["acumulado"]),
-        ])
+        descriptor = Paragraph(str(r["descriptor"]), cell_style)
+        frecuencia = int(r["frecuencia"])
+        pct = f'{float(r["porcentaje"]):.2f}%'
+        data.append([descriptor, frecuencia, pct])
+
+    # Fila de total
+    total_row = [Paragraph("<b>Total de respuestas tratadas</b>", cell_style), total_respuestas, ""]
+    data.append(total_row)
+    total_index = len(data) - 1
 
     # Construcción de la tabla
     t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     style = TableStyle([
+        # Header
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor(TEXTO)),
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
-
-        # Alineaciones: textos a la izquierda, números a la derecha
-        ("ALIGN", (0,1), (1,-1), "LEFT"),
-        ("ALIGN", (2,1), (-1,-1), "RIGHT"),
-
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",   (0,0), (-1,0), 11),
+
+        # Cuerpo
         ("FONTSIZE",   (0,1), (-1,-1), 9.6),
-
-        ("LEFTPADDING", (0,0), (-1,-1), 6),
+        ("ALIGN",      (0,1), (0,-1), "LEFT"),   # Descriptor
+        ("ALIGN",      (1,1), (-1,-2), "RIGHT"), # Frecuencia y %
+        ("LEFTPADDING",(0,0), (-1,-1), 6),
         ("RIGHTPADDING",(0,0), (-1,-1), 6),
-        ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
+        ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
 
-        # Zebrados y rejilla ligera
-        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.whitesmoke, colors.Color(0.97,0.97,0.97)]),
+        # Zebrados + grid
+        ("ROWBACKGROUNDS", (0,1), (-1,-2), [colors.whitesmoke, colors.Color(0.97,0.97,0.97)]),
         ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
+
+        # Fila de total
+        ("BACKGROUND", (0,total_index), (-1,total_index), colors.Color(0.93, 0.96, 0.99)),
+        ("FONTNAME",   (0,total_index), (-1,total_index), "Helvetica-Bold"),
+        ("ALIGN",      (1,total_index), (1,total_index), "RIGHT"),
+        ("ALIGN",      (2,total_index), (2,total_index), "RIGHT"),
     ])
     t.setStyle(style)
     return t
@@ -776,6 +781,16 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph("Estrategia Sembremos Seguridad", stys["CoverSubtitle"])]
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
     story += [PageBreak()]
+
+    # ---------- INTRODUCCIÓN (permanece aquí si ya la venías usando) ----------
+    story += [Paragraph("Introducción", stys["TitleBig"]), Spacer(1, 0.2*cm)]
+    story += [Paragraph(
+        "Este informe presenta un análisis tipo <b>Pareto (80/20)</b> sobre los descriptores seleccionados. "
+        "El objetivo es identificar los elementos que concentran la mayor parte de los hechos reportados para apoyar la "
+        "priorización operativa y la toma de decisiones. El documento incluye el gráfico de Pareto, un cuadro "
+        "resumido con frecuencia y porcentaje por descriptor, y —al final— una sección de conclusiones y recomendaciones.",
+        stys["Body"]
+    ), Spacer(1, 0.35*cm)]
 
     # ---------- RESULTADOS ----------
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
@@ -824,7 +839,7 @@ def generar_pdf_informe(nombre_informe: str,
         ),
         Spacer(1, 0.8*cm),
         Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H1Center"]),
-        Paragraph("Sembremos Seguridad", stys["H1Center"]),  # centrado
+        Paragraph("Sembremos Seguridad", stys["H1Center"]),
     ]
 
     doc.build(story)
@@ -834,7 +849,7 @@ def generar_pdf_informe(nombre_informe: str,
 # === Helpers UI formulario de desgloses (con selector de tipo de gráfico) ===
 def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
-    max_secs = max(0, len(descriptor_list))  # sin límite duro; hasta la cantidad de descriptores
+    max_secs = max(0, len(descriptor_list))
     default_val = 1 if max_secs > 0 else 0
     n_secs = st.number_input("Cantidad de secciones de Modalidades",
                              min_value=0, max_value=max_secs, value=default_val, step=1,
@@ -1150,4 +1165,5 @@ else:
             "Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' "
             "para habilitar el unificado."
         )
+
 
