@@ -503,16 +503,61 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     ax1.set_xticks(x)
     ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=45, ha="right")
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
+
     ax2 = ax1.twinx()
     ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
     ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
+
     if (df_par["segmento_real"] == "80%").any():
         cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
         ax1.axvline(cut_idx + 0.5, linestyle=":", color="k")
     ax2.axhline(80, linestyle="--", linewidth=1, color="#666666")
-    buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="PNG"); plt.close(fig)
+
+    buf = io.BytesIO()
+    fig.tight_layout()
+    fig.savefig(buf, format="PNG")
+    plt.close(fig)
     return buf.getvalue()
 
+# --- Etiquetado temático (se mantiene interno, pero ya NO se imprime “ámbito”) ---
+def _tema_descriptor(descriptor: str) -> str:
+    d = descriptor.lower()
+    if "droga" in d or "búnker" in d or "bunker" in d or "narco" in d or "venta de drogas" in d:
+        return "drogas"
+    if "robo" in d or "hurto" in d or "asalto" in d or "vehícul" in d or "comercio" in d:
+        return "delitos contra la propiedad"
+    if "violencia" in d or "lesion" in d or "homicidio" in d:
+        return "violencia"
+    if "infraestructura" in d or "alumbrado" in d or "lotes" in d:
+        return "condiciones urbanas / entorno"
+    return "seguridad y convivencia"
+
+# --- RESUMEN: sin el texto “(ámbito: …)” ---
+def _resumen_texto(df_par: pd.DataFrame) -> str:
+    if df_par.empty:
+        return "Sin datos disponibles."
+    total = int(df_par["frecuencia"].sum())
+    n = len(df_par)
+    top = df_par.iloc[0]
+    idx80 = int(np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max() + 1) if (df_par["segmento_real"]=="80%").any() else 0
+    # Tema se calcula pero ya NO se imprime “(ámbito: …)”
+    return (f"Se registran <b>{total}</b> hechos distribuidos en <b>{n}</b> descriptores. "
+            f"El descriptor de mayor incidencia es <b>{top['descriptor']}</b>, con <b>{int(top['frecuencia'])}</b> casos "
+            f"({float(top['porcentaje']):.2f}%). El punto de corte del <b>80%</b> se alcanza con "
+            f"<b>{idx80}</b> descriptores, útiles para la priorización operativa.")
+
+# --- TEXTO DE MODALIDADES: eliminado el “ámbito: …” ---
+def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
+    pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
+    pares_orden = sorted(pares_filtrados, key=lambda x: x[1], reverse=True)
+    if not pares_orden:
+        return (f"Para <b>{descriptor}</b> no se reportaron modalidades con porcentaje. "
+                "Se sugiere recolectar esta información para focalizar acciones.")
+    top_txt = "; ".join([f"<b>{l}</b> ({p:.1f}%)" for l, p in pares_orden[:2]])
+    return (f"En <b>{descriptor}</b> destacan: {top_txt}. "
+            "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
+
+# --- Gráfico de modalidades (igual que antes) ---
 def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str = "barh") -> bytes:
     labels = [l for l, p in data_pairs if str(l).strip()]
     vals   = [float(p or 0) for l, p in data_pairs if str(l).strip()]
@@ -577,40 +622,54 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             left += w
         ax.set_xlim(0, max(100, sum(vals)))
         ax.set_yticks([]); ax.set_xlabel("Porcentaje (composición)")
-        ax.set_title(title, color=TEXTO); ax.grid(False)
+        ax.set_title(title, color=TEXTO)
+        ax.grid(False)
 
     elif kind == "pill":
         fig_height = 0.9 + n*0.85
         fig, ax = plt.subplots(figsize=(10.8, fig_height))
         ax.set_xlim(0, 100); ax.set_ylim(0, n)
         ax.axis("off")
-        track_h = 0.72; round_r = track_h/2
+        track_h = 0.72
+        round_r = track_h/2
+
         for i, (lab, v) in enumerate(zip(labels, vals)):
             y = n - 1 - i + (1 - track_h)/2
-            track = FancyBboxPatch((0.8, y), 98.4, track_h,
-                                   boxstyle=f"round,pad=0,rounding_size={round_r}",
-                                   linewidth=1, edgecolor="#9dbbd6", facecolor="#e6f0fb")
+            track = FancyBboxPatch(
+                (0.8, y), 98.4, track_h,
+                boxstyle=f"round,pad=0,rounding_size={round_r}",
+                linewidth=1, edgecolor="#9dbbd6", facecolor="#e6f0fb"
+            )
             ax.add_patch(track)
+
             prog_w = max(0.001, min(98.4, float(v)))
-            prog = FancyBboxPatch((0.8, y), prog_w, track_h,
-                                  boxstyle=f"round,pad=0,rounding_size={round_r}",
-                                  linewidth=0, facecolor=AZUL, alpha=0.35)
+            prog = FancyBboxPatch(
+                (0.8, y), prog_w, track_h,
+                boxstyle=f"round,pad=0,rounding_size={round_r}",
+                linewidth=0, facecolor=AZUL, alpha=0.35
+            )
             ax.add_patch(prog)
+
             ax.add_patch(Circle((0.8 + round_r*0.8, y + track_h/2), round_r*0.9, color="#a3a3a3", alpha=0.6))
             ax.add_patch(Circle((0.8 + round_r*0.6, y + track_h/2), round_r*0.9, color=AZUL, alpha=0.9))
+
+            # Badge %
             badge_w = 12.0; badge_h = track_h*0.8
             badge_x = 5.0;  badge_y = y + (track_h - badge_h)/2
-            from matplotlib.patches import FancyBboxPatch as FB
-            badge = FB((badge_x, badge_y), badge_w, badge_h,
-                       boxstyle=f"round,pad=0.25,rounding_size={badge_h/2}",
-                       linewidth=1, edgecolor="#cfd8e3", facecolor="white")
+            badge = FancyBboxPatch(
+                (badge_x, badge_y), badge_w, badge_h,
+                boxstyle=f"round,pad=0.25,rounding_size={badge_h/2}",
+                linewidth=1, edgecolor="#cfd8e3", facecolor="white"
+            )
             ax.add_patch(badge)
             ax.text(badge_x + badge_w/2, y + track_h/2, f"{v:.1f}%", ha="center", va="center", fontsize=10)
+
             ax.text(badge_x + badge_w + 3.0, y + track_h/2, lab, va="center", ha="left",
                     fontsize=12, color="#0f172a")
+
         ax.set_title(title, color=TEXTO)
 
-    else:  # barh
+    else:  # 'barh'
         fig, ax = plt.subplots(figsize=(11.5, 5.4))
         y = np.arange(n)
         ax.barh(y, vals, color=colors_seq)
@@ -623,59 +682,36 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             ax.text(v + 1, i, f"{v:.1f}%", va="center", fontsize=10)
         ax.set_title(title, color=TEXTO)
 
-    buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="PNG"); plt.close(fig)
+    buf = io.BytesIO()
+    fig.tight_layout()
+    fig.savefig(buf, format="PNG")
+    plt.close(fig)
     return buf.getvalue()
 
-def _tema_descriptor(descriptor: str) -> str:
-    d = descriptor.lower()
-    if "droga" in d or "búnker" in d or "bunker" in d or "narco" in d or "venta de drogas" in d:
-        return "drogas"
-    if "robo" in d or "hurto" in d or "asalto" in d or "vehícul" in d or "comercio" in d:
-        return "delitos contra la propiedad"
-    if "violencia" in d or "lesion" in d or "homicidio" in d:
-        return "violencia"
-    if "infraestructura" in d or "alumbrado" in d or "lotes" in d:
-        return "condiciones urbanas / entorno"
-    return "seguridad y convivencia"
-
-def _resumen_texto(df_par: pd.DataFrame) -> str:
-    if df_par.empty:
-        return "Sin datos disponibles."
-    total = int(df_par["frecuencia"].sum())
-    n = len(df_par)
-    top = df_par.iloc[0]
-    idx80 = int(np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max() + 1) if (df_par["segmento_real"]=="80%").any() else 0
-    tema = _tema_descriptor(str(top["descriptor"]))
-    return (f"Se registran <b>{total}</b> hechos distribuidos en <b>{n}</b> descriptores. "
-            f"El descriptor de mayor incidencia pertenece al ámbito de <b>{tema}</b>: "
-            f"<b>{top['descriptor']}</b>, con <b>{int(top['frecuencia'])}</b> casos "
-            f"({float(top['porcentaje']):.2f}%). El punto de corte del <b>80%</b> se alcanza con "
-            f"<b>{idx80}</b> descriptores, útiles para la priorización operativa.")
-
-def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
-    pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
-    pares_orden = sorted(pares_filtrados, key=lambda x: x[1], reverse=True)
-    tema = _tema_descriptor(descriptor)
-    if not pares_orden:
-        return (f"Para <b>{descriptor}</b> (ámbito: <b>{tema}</b>) no se reportaron modalidades con porcentaje. "
-                "Se sugiere recolectar esta información para focalizar acciones.")
-    top_txt = "; ".join([f"<b>{l}</b> ({p:.1f}%)" for l, p in pares_orden[:2]])
-    return (f"En <b>{descriptor}</b> (ámbito: <b>{tema}</b>) destacan: {top_txt}. "
-            "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
 # ============================================================================
 # ============================== PARTE 8/10 =================================
 # ========= Tabla PDF, generador de Informe PDF y UI de desgloses ===========
 # ============================================================================
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
-    """Cuadro: Descriptor | Frecuencia | %  + fila final: Total de respuestas tratadas."""
-    fracs = [0.62, 0.20, 0.18]  # anchos relativos
+    """
+    Cuadro simplificado: Descriptor | Frecuencia | %
+    Incluye una fila final con 'Total de respuestas tratadas'.
+    """
+    fracs = [0.62, 0.20, 0.18]  # Descriptor, Frecuencia, %
     col_widths = [f * doc_width for f in fracs]
     stys = _styles()
 
+    from reportlab.lib.styles import ParagraphStyle
     cell_style = ParagraphStyle(
-        name="CellWrap", parent=stys["Normal"], fontSize=9.6, leading=12,
-        textColor="#111111", wordWrap="CJK", spaceBefore=0, spaceAfter=0,
+        name="CellWrap",
+        parent=stys["Normal"],
+        fontSize=9.6,
+        leading=12,
+        textColor="#111111",
+        wordWrap="CJK",
+        spaceBefore=0,
+        spaceAfter=0,
     )
 
     head = [
@@ -697,7 +733,7 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     total_index = len(data) - 1
 
     t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
-    style = TableStyle([
+    t.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor(TEXTO)),
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
@@ -717,9 +753,23 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         ("FONTNAME",   (0,total_index), (-1,total_index), "Helvetica-Bold"),
         ("ALIGN",      (1,total_index), (1,total_index), "RIGHT"),
         ("ALIGN",      (2,total_index), (2,total_index), "RIGHT"),
-    ])
-    t.setStyle(style)
+    ]))
     return t
+
+
+def _altura_img_según_filas(n_filas: int) -> float:
+    """
+    Devuelve la altura (en cm) para el PRIMER gráfico de Pareto de modo que
+    quepa junto con la tabla en una sola página. Si hay muchas filas, reduce la imagen.
+    """
+    # Heurística suave: más filas => imagen más pequeña
+    if n_filas >= 28:
+        return 5.8  # cm
+    if n_filas >= 20:
+        return 6.8
+    if n_filas >= 14:
+        return 7.6
+    return 8.6
 
 
 def generar_pdf_informe(nombre_informe: str,
@@ -741,7 +791,7 @@ def generar_pdf_informe(nombre_informe: str,
     stys = _styles()
     story: List = []
 
-    # PORTADA
+    # ---------- PORTADA ----------
     story += [NextPageTemplate("Normal")]
     story += [Spacer(1, 2.2*cm)]
     story += [Paragraph(f"Informe de Resultados Diagrama de Pareto - {nombre_informe}", stys["CoverTitle"])]
@@ -749,7 +799,7 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
     story += [PageBreak()]
 
-    # INTRODUCCIÓN (centrada tras portada)
+    # ---------- INTRODUCCIÓN ----------
     story += [Paragraph("Introducción", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(
         "Este informe presenta un análisis tipo <b>Pareto (80/20)</b> sobre los descriptores seleccionados. "
@@ -759,22 +809,30 @@ def generar_pdf_informe(nombre_informe: str,
         stys["Body"]
     ), Spacer(1, 0.35*cm)]
 
-    # RESULTADOS GENERALES
+    # ---------- RESULTADOS (Gráfico + explicación + TABLA JUNTOS) ----------
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
+    # Genera imagen del Pareto
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
-    story += [RLImage(io.BytesIO(pareto_png), width=doc.width, height=8.6*cm)]
-    story += [Spacer(1, 0.25*cm)]
-    story += [Paragraph(
-        "El diagrama muestra la frecuencia por descriptor (barras en verde/azul) y el <b>porcentaje acumulado</b> (línea). "
-        "La línea punteada del 80% indica el <b>punto de corte</b> para priorización.",
-        stys["Small"]
-    ), Spacer(1, 0.25*cm)]
-    story.append(_tabla_resultados_flowable(df_par, doc.width))
-    story += [Spacer(1, 0.25*cm)]
 
-    # MODALIDADES (cada bloque va junto)
+    # Decide altura según el número de filas para que TODO quepa en una sola página
+    h_img_cm = _altura_img_según_filas(len(df_par))
+    bloque_resultados = [
+        RLImage(io.BytesIO(pareto_png), width=doc.width, height=h_img_cm*cm),
+        Spacer(1, 0.25*cm),
+        Paragraph(
+            "El diagrama muestra la frecuencia por descriptor (barras en verde/azul) y el <b>porcentaje acumulado</b> (línea). "
+            "La línea punteada del 80% indica el <b>punto de corte</b> para priorización.",
+            stys["Small"]
+        ),
+        Spacer(1, 0.25*cm),
+        _tabla_resultados_flowable(df_par, doc.width)
+    ]
+    # 🔒 Mantener gráfico + texto explicativo + tabla en la misma página
+    story.append(KeepTogether(bloque_resultados))
+
+    # ---------- MODALIDADES (cada bloque va junto) ----------
     for sec in desgloses:
         descriptor = sec.get("descriptor", "").strip()
         rows = sec.get("rows", [])
@@ -790,9 +848,9 @@ def generar_pdf_informe(nombre_informe: str,
             RLImage(io.BytesIO(_modalidades_png(descriptor or 'Modalidades', pares, kind=chart_kind)),
                     width=doc.width, height=8.5*cm),
         ]
-        story += [KeepTogether(bloque)]
+        story.append(KeepTogether(bloque))
 
-    # CIERRE
+    # ---------- CIERRE ----------
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
         Paragraph("Conclusiones y recomendaciones", stys["TitleBigCenter"]),
@@ -812,48 +870,6 @@ def generar_pdf_informe(nombre_informe: str,
     doc.build(story)
     return buf.getvalue()
 
-def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
-    st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
-    max_secs = max(0, len(descriptor_list))
-    default_val = 1 if max_secs > 0 else 0
-    n_secs = st.number_input("Cantidad de secciones de Modalidades",
-                             min_value=0, max_value=max_secs, value=default_val, step=1,
-                             key=f"{key_prefix}_nsecs")
-    desgloses: List[Dict] = []
-    for i in range(n_secs):
-        with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
-            dsel = st.selectbox(f"Descriptor para la sección #{i+1}",
-                                options=["(elegir)"] + descriptor_list, index=0, key=f"{key_prefix}_desc_{i}")
-
-            chart_kind = st.selectbox(
-                "Tipo de gráfico",
-                options=[("Barras horizontales", "barh"),
-                         ("Barras verticales", "bar"),
-                         ("Lollipop (palo+punto)", "lollipop"),
-                         ("Dona / Pie", "donut"),
-                         ("Barra 100% (composición)", "comp100"),
-                         ("Píldora (progreso redondeado)", "pill")],
-                index=0, format_func=lambda x: x[0], key=f"{key_prefix}_chart_{i}"
-            )[1]
-
-            rows = [{"Etiqueta":"", "%":0.0} for _ in range(10)]
-            df_rows = pd.DataFrame(rows)
-            de = st.data_editor(
-                df_rows, key=f"{key_prefix}_rows_{i}", use_container_width=True,
-                column_config={
-                    "Etiqueta": st.column_config.TextColumn("Etiqueta / Modalidad", width="large"),
-                    "%": st.column_config.NumberColumn("Porcentaje", min_value=0.0, max_value=100.0, step=0.1)
-                },
-                num_rows="fixed"
-            )
-            total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
-            st.caption(f"Suma actual: {total_pct:.1f}% (recomendado ≈100%)")
-
-            if dsel != "(elegir)":
-                desgloses.append({"descriptor": dsel,
-                                  "rows": de.to_dict(orient="records"),
-                                  "chart": chart_kind})
-    return desgloses
 # ============================================================================
 # ============================== PARTE 9/10 =================================
 # ======================= UI principal (Editor Pareto/Guardado) ==============
@@ -1144,6 +1160,7 @@ else:
 
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
 
 
 
