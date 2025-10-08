@@ -420,19 +420,19 @@ def sheets_guardar_pareto(nombre: str, freq_map: Dict[str, int], sobrescribir: b
 # =================== Estado de sesión + Estilos básicos PDF =================
 # ============================================================================
 
-# Estado de sesión
+# ---- Estado de sesión ----
 st.session_state.setdefault("freq_map", {})
 st.session_state.setdefault("portafolio", {})
 st.session_state.setdefault("msel", [])
 st.session_state.setdefault("reset_after_save", False)
 
-# Si cambia la URL del Sheet, limpiamos portafolio para no arrastrar datos viejos
+# NUEVO: si cambió la URL del Sheet, vaciar portafolio para no arrastrar datos viejos
 st.session_state.setdefault("sheet_url_loaded", None)
 if st.session_state["sheet_url_loaded"] != SPREADSHEET_URL:
     st.session_state["portafolio"] = {}
     st.session_state["sheet_url_loaded"] = SPREADSHEET_URL
 
-# Cargar portafolio desde Sheets sólo si está vacío
+# Cargar portafolio desde Sheets solo si está vacío
 if not st.session_state["portafolio"]:
     loaded = sheets_cargar_portafolio()
     if loaded:
@@ -445,7 +445,7 @@ if st.session_state.get("reset_after_save", False):
     st.session_state.pop("editor_freq", None)
     st.session_state["reset_after_save"] = False
 
-# Estilos PDF
+# ---- Estilos PDF / páginas ----
 PAGE_W, PAGE_H = A4
 
 def _styles():
@@ -460,7 +460,7 @@ def _styles():
     ))
     ss.add(ParagraphStyle(
         name="CoverDate", parent=ss["Normal"], fontSize=15,
-        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8  # fecha centrada
+        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8   # fecha centrada
     ))
     ss.add(ParagraphStyle(
         name="TitleBig", parent=ss["Title"], fontSize=24,
@@ -475,6 +475,12 @@ def _styles():
     ss.add(ParagraphStyle(name="Body", parent=ss["Normal"], fontSize=11, leading=14, textColor="#111"))
     ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9.6, leading=12, textColor=GRIS))
     ss.add(ParagraphStyle(name="TableHead", parent=ss["Normal"], fontSize=11, leading=13, textColor=colors.white))
+
+    # Estilo para viñetas (líneas separadas)
+    ss.add(ParagraphStyle(
+        name="Bullet", parent=ss["Body"],
+        leftIndent=12, bulletIndent=0, spaceBefore=2, spaceAfter=2
+    ))
     return ss
 
 def _page_cover(canv, doc):
@@ -487,6 +493,7 @@ def _page_normal(_canv, _doc):
 def _page_last(canv, _doc):
     canv.setFillColor(colors.HexColor(TEXTO))
     canv.rect(0, 0, PAGE_W, 0.9*cm, fill=1, stroke=0)
+
 # ============================================================================
 # ============================== PARTE 7/10 =================================
 # ============ Imágenes para PDF (Pareto/Modalidades) y textos helper =======
@@ -698,10 +705,13 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     Cuadro simplificado: Descriptor | Frecuencia | %
     Incluye una fila final con 'Total de respuestas tratadas'.
     """
+    # Anchos: Descriptor más amplio para permitir wraps
     fracs = [0.62, 0.20, 0.18]  # Descriptor, Frecuencia, %
     col_widths = [f * doc_width for f in fracs]
+
     stys = _styles()
 
+    # Estilo de celda con ajuste de línea
     from reportlab.lib.styles import ParagraphStyle
     cell_style = ParagraphStyle(
         name="CellWrap",
@@ -714,6 +724,7 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         spaceAfter=0,
     )
 
+    # Encabezado (3 columnas)
     head = [
         Paragraph("Descriptor", stys["TableHead"]),
         Paragraph("Frecuencia", stys["TableHead"]),
@@ -721,6 +732,7 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     ]
     data = [head]
 
+    # Filas de datos
     total_respuestas = int(df_par["frecuencia"].sum()) if not df_par.empty else 0
     for _, r in df_par.iterrows():
         descriptor = Paragraph(str(r["descriptor"]), cell_style)
@@ -728,32 +740,39 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         pct = f'{float(r["porcentaje"]):.2f}%'
         data.append([descriptor, frecuencia, pct])
 
+    # Fila de total
     total_row = [Paragraph("<b>Total de respuestas tratadas</b>", cell_style), total_respuestas, ""]
     data.append(total_row)
     total_index = len(data) - 1
 
+    # Construcción de la tabla
     t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
-    t.setStyle(TableStyle([
+    style = TableStyle([
+        # Header
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor(TEXTO)),
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",   (0,0), (-1,0), 11),
 
+        # Cuerpo
         ("FONTSIZE",   (0,1), (-1,-1), 9.6),
-        ("ALIGN",      (0,1), (0,-1), "LEFT"),
-        ("ALIGN",      (1,1), (-1,-2), "RIGHT"),
+        ("ALIGN",      (0,1), (0,-1), "LEFT"),   # Descriptor
+        ("ALIGN",      (1,1), (-1,-2), "RIGHT"), # Frecuencia y %
         ("LEFTPADDING",(0,0), (-1,-1), 6),
         ("RIGHTPADDING",(0,0), (-1,-1), 6),
         ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
 
+        # Zebrados + grid
         ("ROWBACKGROUNDS", (0,1), (-1,-2), [colors.whitesmoke, colors.Color(0.97,0.97,0.97)]),
         ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
 
+        # Fila de total
         ("BACKGROUND", (0,total_index), (-1,total_index), colors.Color(0.93, 0.96, 0.99)),
         ("FONTNAME",   (0,total_index), (-1,total_index), "Helvetica-Bold"),
         ("ALIGN",      (1,total_index), (1,total_index), "RIGHT"),
         ("ALIGN",      (2,total_index), (2,total_index), "RIGHT"),
-    ]))
+    ])
+    t.setStyle(style)
     return t
 
 
@@ -808,10 +827,11 @@ def generar_pdf_informe(nombre_informe: str,
         stys["Body"]
     ), Spacer(1, 0.35*cm)]
 
-    # ---------- RESULTADOS (Gráfico + explicación + TABLA JUNTOS) ----------
+    # ---------- RESULTADOS ----------
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
+    # Pareto (primero) + explicación + TABLA JUNTOS
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
     h_img_cm = _altura_img_según_filas(len(df_par))
     bloque_resultados = [
@@ -827,7 +847,7 @@ def generar_pdf_informe(nombre_informe: str,
     ]
     story.append(KeepTogether(bloque_resultados))
 
-    # ---------- MODALIDADES (cada bloque va junto) ----------
+    # ---------- MODALIDADES (título + texto + gráfico SIEMPRE juntos) ----------
     for sec in desgloses:
         descriptor = sec.get("descriptor", "").strip()
         rows = sec.get("rows", [])
@@ -845,18 +865,23 @@ def generar_pdf_informe(nombre_informe: str,
         ]
         story.append(KeepTogether(bloque))
 
-    # ---------- CIERRE ----------
+    # ---------- CIERRE (viñetas en líneas separadas) ----------
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
         Paragraph("Conclusiones y recomendaciones", stys["TitleBigCenter"]),
         Spacer(1, 0.2*cm),
-        Paragraph(
-            "• Priorizar intervenciones sobre los descriptores que conforman el <b>80% acumulado</b>. "
-            "• Coordinar acciones interinstitucionales enfocadas en las <b>modalidades</b> con mayor porcentaje. "
-            "• Fortalecer la participación comunitaria y el control territorial en puntos críticos. "
-            "• Monitorear indicadores mensualmente para evaluar la efectividad de las acciones.",
-            stys["Body"]
-        ),
+    ]
+
+    bullets = [
+        "Priorizar intervenciones sobre los descriptores que conforman el <b>80% acumulado</b>.",
+        "Coordinar acciones interinstitucionales enfocadas en las <b>modalidades</b> con mayor porcentaje.",
+        "Fortalecer la participación comunitaria y el control territorial en puntos críticos.",
+        "Monitorear indicadores mensualmente para evaluar la efectividad de las acciones.",
+    ]
+    for b in bullets:
+        story += [Paragraph(b, stys["Bullet"], bulletText="•")]
+
+    story += [
         Spacer(1, 0.8*cm),
         Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H1Center"]),
         Paragraph("Sembremos Seguridad", stys["H1Center"]),
@@ -866,6 +891,7 @@ def generar_pdf_informe(nombre_informe: str,
     return buf.getvalue()
 
 
+# === Helpers UI formulario de desgloses (con selector de tipo de gráfico) ===
 def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
     max_secs = max(0, len(descriptor_list))
@@ -1201,6 +1227,7 @@ else:
 
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
 
 
 
