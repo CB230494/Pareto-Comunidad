@@ -693,6 +693,11 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
 # ========= Tabla PDF, generador de Informe PDF y UI de desgloses ===========
 # ============================================================================
 
+from reportlab.platypus import Table, TableStyle, Paragraph, Spacer, RLImage, KeepTogether, PageBreak, NextPageTemplate
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+from reportlab.lib.pagesizes import A4
+
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     """
     Cuadro simplificado: Descriptor | Frecuencia | %
@@ -762,7 +767,6 @@ def _altura_img_según_filas(n_filas: int) -> float:
     Devuelve la altura (en cm) para el PRIMER gráfico de Pareto de modo que
     quepa junto con la tabla en una sola página. Si hay muchas filas, reduce la imagen.
     """
-    # Heurística suave: más filas => imagen más pequeña
     if n_filas >= 28:
         return 5.8  # cm
     if n_filas >= 20:
@@ -813,10 +817,7 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
-    # Genera imagen del Pareto
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
-
-    # Decide altura según el número de filas para que TODO quepa en una sola página
     h_img_cm = _altura_img_según_filas(len(df_par))
     bloque_resultados = [
         RLImage(io.BytesIO(pareto_png), width=doc.width, height=h_img_cm*cm),
@@ -829,7 +830,6 @@ def generar_pdf_informe(nombre_informe: str,
         Spacer(1, 0.25*cm),
         _tabla_resultados_flowable(df_par, doc.width)
     ]
-    # 🔒 Mantener gráfico + texto explicativo + tabla en la misma página
     story.append(KeepTogether(bloque_resultados))
 
     # ---------- MODALIDADES (cada bloque va junto) ----------
@@ -869,6 +869,52 @@ def generar_pdf_informe(nombre_informe: str,
 
     doc.build(story)
     return buf.getvalue()
+
+
+# === Helpers UI formulario de desgloses (¡de nuevo aquí!) ===
+def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
+    st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
+    max_secs = max(0, len(descriptor_list))
+    default_val = 1 if max_secs > 0 else 0
+    n_secs = st.number_input("Cantidad de secciones de Modalidades",
+                             min_value=0, max_value=max_secs, value=default_val, step=1,
+                             key=f"{key_prefix}_nsecs")
+    desgloses: List[Dict] = []
+    for i in range(n_secs):
+        with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
+            dsel = st.selectbox(f"Descriptor para la sección #{i+1}",
+                                options=["(elegir)"] + descriptor_list, index=0, key=f"{key_prefix}_desc_{i}")
+
+            chart_kind = st.selectbox(
+                "Tipo de gráfico",
+                options=[("Barras horizontales", "barh"),
+                         ("Barras verticales", "bar"),
+                         ("Lollipop (palo+punto)", "lollipop"),
+                         ("Dona / Pie", "donut"),
+                         ("Barra 100% (composición)", "comp100"),
+                         ("Píldora (progreso redondeado)", "pill")],
+                index=0, format_func=lambda x: x[0], key=f"{key_prefix}_chart_{i}"
+            )[1]
+
+            rows = [{"Etiqueta":"", "%":0.0} for _ in range(10)]
+            df_rows = pd.DataFrame(rows)
+            de = st.data_editor(
+                df_rows, key=f"{key_prefix}_rows_{i}", use_container_width=True,
+                column_config={
+                    "Etiqueta": st.column_config.TextColumn("Etiqueta / Modalidad", width="large"),
+                    "%": st.column_config.NumberColumn("Porcentaje", min_value=0.0, max_value=100.0, step=0.1)
+                },
+                num_rows="fixed"
+            )
+            total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
+            st.caption(f"Suma actual: {total_pct:.1f}% (recomendado ≈100%)")
+
+            if dsel != "(elegir)":
+                desgloses.append({"descriptor": dsel,
+                                  "rows": de.to_dict(orient="records"),
+                                  "chart": chart_kind})
+    return desgloses
+
 
 # ============================================================================
 # ============================== PARTE 9/10 =================================
@@ -1160,6 +1206,7 @@ else:
 
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
 
 
 
