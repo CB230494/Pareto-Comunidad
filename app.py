@@ -35,9 +35,9 @@ from reportlab.platypus import (
 from reportlab.platypus.flowables import KeepTogether
 from datetime import datetime
 
-# ----------------- CONFIG -----------------
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1cf-avzRjtBXcqr69WfrrsTAegm0PMAe8LgjeLpfcS5g/edit?usp=sharing"
-WS_PARETOS = "paretos"
+# ----------------- CONFIG (actualizado) -----------------
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1XZjXQfLb5Jiptp_BXuCfg9QZNEz6ZWh9hbtp0rRAGpM/edit?usp=sharing"
+WS_PARETOS = "paretos"  # si tu pestaña se llama distinto, cámbiala aquí
 
 st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 
@@ -58,6 +58,7 @@ plt.rcParams.update({
     "axes.grid": True,
     "grid.alpha": 0.25,
 })
+
 # ============================================================================
 # ============================== PARTE 2/10 =================================
 # ========================= Catálogo embebido (CSV) =========================
@@ -1165,6 +1166,7 @@ else:
             "Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' "
             "para habilitar el unificado."
         )
+
 
 
 
