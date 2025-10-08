@@ -693,11 +693,6 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
 # ========= Tabla PDF, generador de Informe PDF y UI de desgloses ===========
 # ============================================================================
 
-from reportlab.platypus import Table, TableStyle, Paragraph, Spacer, RLImage, KeepTogether, PageBreak, NextPageTemplate
-from reportlab.lib import colors
-from reportlab.lib.units import cm
-from reportlab.lib.pagesizes import A4
-
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     """
     Cuadro simplificado: Descriptor | Frecuencia | %
@@ -871,7 +866,6 @@ def generar_pdf_informe(nombre_informe: str,
     return buf.getvalue()
 
 
-# === Helpers UI formulario de desgloses (¡de nuevo aquí!) ===
 def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
     max_secs = max(0, len(descriptor_list))
@@ -914,6 +908,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                                   "rows": de.to_dict(orient="records"),
                                   "chart": chart_kind})
     return desgloses
+
 
 
 # ============================================================================
@@ -1206,6 +1201,7 @@ else:
 
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
 
 
 
