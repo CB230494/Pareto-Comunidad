@@ -460,7 +460,7 @@ def _styles():
     ))
     ss.add(ParagraphStyle(
         name="CoverDate", parent=ss["Normal"], fontSize=15,
-        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8   # fecha centrada
+        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8
     ))
     ss.add(ParagraphStyle(
         name="TitleBig", parent=ss["Title"], fontSize=24,
@@ -476,9 +476,9 @@ def _styles():
     ss.add(ParagraphStyle(name="Small", parent=ss["Normal"], fontSize=9.6, leading=12, textColor=GRIS))
     ss.add(ParagraphStyle(name="TableHead", parent=ss["Normal"], fontSize=11, leading=13, textColor=colors.white))
 
-    # Estilo para viñetas (líneas separadas)
+    # ⚠️ No usar "Bullet" (ya existe). Creamos uno propio:
     ss.add(ParagraphStyle(
-        name="Bullet", parent=ss["Body"],
+        name="BulletList", parent=ss["Body"],
         leftIndent=12, bulletIndent=0, spaceBefore=2, spaceAfter=2
     ))
     return ss
@@ -493,6 +493,7 @@ def _page_normal(_canv, _doc):
 def _page_last(canv, _doc):
     canv.setFillColor(colors.HexColor(TEXTO))
     canv.rect(0, 0, PAGE_W, 0.9*cm, fill=1, stroke=0)
+
 
 # ============================================================================
 # ============================== PARTE 7/10 =================================
@@ -705,13 +706,10 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     Cuadro simplificado: Descriptor | Frecuencia | %
     Incluye una fila final con 'Total de respuestas tratadas'.
     """
-    # Anchos: Descriptor más amplio para permitir wraps
     fracs = [0.62, 0.20, 0.18]  # Descriptor, Frecuencia, %
     col_widths = [f * doc_width for f in fracs]
-
     stys = _styles()
 
-    # Estilo de celda con ajuste de línea
     from reportlab.lib.styles import ParagraphStyle
     cell_style = ParagraphStyle(
         name="CellWrap",
@@ -724,7 +722,6 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         spaceAfter=0,
     )
 
-    # Encabezado (3 columnas)
     head = [
         Paragraph("Descriptor", stys["TableHead"]),
         Paragraph("Frecuencia", stys["TableHead"]),
@@ -732,7 +729,6 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     ]
     data = [head]
 
-    # Filas de datos
     total_respuestas = int(df_par["frecuencia"].sum()) if not df_par.empty else 0
     for _, r in df_par.iterrows():
         descriptor = Paragraph(str(r["descriptor"]), cell_style)
@@ -740,49 +736,36 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         pct = f'{float(r["porcentaje"]):.2f}%'
         data.append([descriptor, frecuencia, pct])
 
-    # Fila de total
     total_row = [Paragraph("<b>Total de respuestas tratadas</b>", cell_style), total_respuestas, ""]
     data.append(total_row)
     total_index = len(data) - 1
 
-    # Construcción de la tabla
     t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
-    style = TableStyle([
-        # Header
+    t.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor(TEXTO)),
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",   (0,0), (-1,0), 11),
-
-        # Cuerpo
         ("FONTSIZE",   (0,1), (-1,-1), 9.6),
-        ("ALIGN",      (0,1), (0,-1), "LEFT"),   # Descriptor
-        ("ALIGN",      (1,1), (-1,-2), "RIGHT"), # Frecuencia y %
+        ("ALIGN",      (0,1), (0,-1), "LEFT"),
+        ("ALIGN",      (1,1), (-1,-2), "RIGHT"),
         ("LEFTPADDING",(0,0), (-1,-1), 6),
         ("RIGHTPADDING",(0,0), (-1,-1), 6),
         ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
-
-        # Zebrados + grid
         ("ROWBACKGROUNDS", (0,1), (-1,-2), [colors.whitesmoke, colors.Color(0.97,0.97,0.97)]),
         ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
-
-        # Fila de total
         ("BACKGROUND", (0,total_index), (-1,total_index), colors.Color(0.93, 0.96, 0.99)),
         ("FONTNAME",   (0,total_index), (-1,total_index), "Helvetica-Bold"),
         ("ALIGN",      (1,total_index), (1,total_index), "RIGHT"),
         ("ALIGN",      (2,total_index), (2,total_index), "RIGHT"),
-    ])
-    t.setStyle(style)
+    ]))
     return t
 
 
 def _altura_img_según_filas(n_filas: int) -> float:
-    """
-    Devuelve la altura (en cm) para el PRIMER gráfico de Pareto de modo que
-    quepa junto con la tabla en una sola página. Si hay muchas filas, reduce la imagen.
-    """
+    """Altura (cm) del PRIMER gráfico para que quepa junto a la tabla en una página."""
     if n_filas >= 28:
-        return 5.8  # cm
+        return 5.8
     if n_filas >= 20:
         return 6.8
     if n_filas >= 14:
@@ -831,7 +814,6 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
-    # Pareto (primero) + explicación + TABLA JUNTOS
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
     h_img_cm = _altura_img_según_filas(len(df_par))
     bloque_resultados = [
@@ -847,7 +829,7 @@ def generar_pdf_informe(nombre_informe: str,
     ]
     story.append(KeepTogether(bloque_resultados))
 
-    # ---------- MODALIDADES (título + texto + gráfico SIEMPRE juntos) ----------
+    # ---------- MODALIDADES (cada bloque va junto) ----------
     for sec in desgloses:
         descriptor = sec.get("descriptor", "").strip()
         rows = sec.get("rows", [])
@@ -879,7 +861,7 @@ def generar_pdf_informe(nombre_informe: str,
         "Monitorear indicadores mensualmente para evaluar la efectividad de las acciones.",
     ]
     for b in bullets:
-        story += [Paragraph(b, stys["Bullet"], bulletText="•")]
+        story += [Paragraph(b, stys["BulletList"], bulletText="•")]
 
     story += [
         Spacer(1, 0.8*cm),
@@ -1227,6 +1209,7 @@ else:
 
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
 
 
 
