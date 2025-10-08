@@ -429,10 +429,19 @@ st.session_state.setdefault("portafolio", {})
 st.session_state.setdefault("msel", [])
 st.session_state.setdefault("reset_after_save", False)
 
+# NUEVO: si cambió la URL del Sheet, vaciar portafolio para no arrastrar datos viejos
+st.session_state.setdefault("sheet_url_loaded", None)
+if st.session_state["sheet_url_loaded"] != SPREADSHEET_URL:
+    st.session_state["portafolio"] = {}
+    st.session_state["sheet_url_loaded"] = SPREADSHEET_URL
+
+# Cargar portafolio desde Sheets solo si está vacío
 if not st.session_state["portafolio"]:
     loaded = sheets_cargar_portafolio()
-    if loaded: st.session_state["portafolio"].update(loaded)
+    if loaded:
+        st.session_state["portafolio"].update(loaded)
 
+# Reset después de guardar
 if st.session_state.get("reset_after_save", False):
     st.session_state["freq_map"] = {}
     st.session_state["msel"] = []
@@ -481,6 +490,7 @@ def _page_normal(_canv, _doc):
 def _page_last(canv, _doc):
     canv.setFillColor(colors.HexColor(TEXTO))
     canv.rect(0, 0, PAGE_W, 0.9*cm, fill=1, stroke=0)
+
 # ============================================================================
 # ============================== PARTE 7/10 =================================
 # ============ Imágenes para PDF (Pareto/Modalidades) y textos helper =======
@@ -898,7 +908,8 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
 
 st.title("Pareto de Descriptores")
 
-c_t1, c_t2, c_t3 = st.columns([2,1,1])
+# Cabecera con controles y utilidades
+c_t1, c_t2, c_t3, c_t4 = st.columns([2, 1, 1, 1])
 with c_t1:
     titulo = st.text_input("Título del Pareto (opcional)", value="Pareto Comunidad")
 with c_t2:
@@ -908,11 +919,21 @@ with c_t3:
         st.session_state["portafolio"] = sheets_cargar_portafolio()
         st.success("Portafolio recargado desde Google Sheets.")
         st.rerun()
+with c_t4:
+    if st.button("🧹 Limpiar portafolio (solo sesión)"):
+        st.session_state["portafolio"] = {}
+        st.info("Portafolio de la sesión limpiado.")
+        st.rerun()
 
-cat_df = pd.DataFrame(CATALOGO).sort_values(["categoria","descriptor"]).reset_index(drop=True)
+# Selección de descriptores y edición de frecuencias
+cat_df = pd.DataFrame(CATALOGO).sort_values(["categoria", "descriptor"]).reset_index(drop=True)
 opciones = cat_df["descriptor"].tolist()
-seleccion = st.multiselect("1) Escoge uno o varios descriptores", options=opciones,
-                           default=st.session_state["msel"], key="msel")
+seleccion = st.multiselect(
+    "1) Escoge uno o varios descriptores",
+    options=opciones,
+    default=st.session_state["msel"],
+    key="msel"
+)
 
 st.subheader("2) Asigna la frecuencia")
 if seleccion:
@@ -920,28 +941,36 @@ if seleccion:
     base["frecuencia"] = [st.session_state["freq_map"].get(d, 0) for d in base["descriptor"]]
 
     edit = st.data_editor(
-        base, key="editor_freq", num_rows="fixed", use_container_width=True,
+        base,
+        key="editor_freq",
+        num_rows="fixed",
+        use_container_width=True,
         column_config={
             "descriptor": st.column_config.TextColumn("DESCRIPTOR", width="large"),
             "categoria": st.column_config.TextColumn("CATEGORÍA", width="small"),
             "frecuencia": st.column_config.NumberColumn("Frecuencia", min_value=0, step=1),
         },
     )
+
+    # Persistir frecuencias en el estado
     for _, row in edit.iterrows():
         st.session_state["freq_map"][row["descriptor"]] = int(row["frecuencia"])
 
-    df_in = edit[["descriptor","categoria"]].copy()
+    # Armar DataFrame para el Pareto
+    df_in = edit[["descriptor", "categoria"]].copy()
     df_in["frecuencia"] = df_in["descriptor"].map(st.session_state["freq_map"]).fillna(0).astype(int)
 
     st.subheader("3) Pareto (en edición)")
     tabla = calcular_pareto(df_in)
 
-    mostrar = tabla.copy()[["categoria","descriptor","frecuencia","porcentaje","pct_acum","acumulado","segmento"]]
-    mostrar = mostrar.rename(columns={"pct_acum": "porcentaje acumulado"})
-    mostrar["porcentaje"] = mostrar["porcentaje"].map(lambda x: f"{x:.2f}%")
-    mostrar["porcentaje acumulado"] = mostrar["porcentaje acumulado"].map(lambda x: f"{x:.2f}%")
+    mostrar = tabla.copy()[
+        ["categoria", "descriptor", "frecuencia", "porcentaje", "pct_acum", "acumulado", "segmento"]
+    ].rename(columns={"pct_acum": "porcentaje acumulado"})
+    if not mostrar.empty:
+        mostrar["porcentaje"] = mostrar["porcentaje"].map(lambda x: f"{x:.2f}%")
+        mostrar["porcentaje acumulado"] = mostrar["porcentaje acumulado"].map(lambda x: f"{x:.2f}%")
 
-    c1, c2 = st.columns([1,1], gap="large")
+    c1, c2 = st.columns([1, 1], gap="large")
     with c1:
         st.markdown("**Tabla de Pareto**")
         if not tabla.empty:
@@ -949,10 +978,12 @@ if seleccion:
         else:
             st.info("Ingresa frecuencias (>0) para ver la tabla.")
     with c2:
-        st.markdown("**Gráfico de Pareto**"); dibujar_pareto(tabla, titulo)
+        st.markdown("**Gráfico de Pareto**")
+        dibujar_pareto(tabla, titulo)
 
+    # Guardado y descarga
     st.subheader("4) Guardar / Descargar")
-    col_g1, col_g2, _ = st.columns([1,1,2])
+    col_g1, col_g2, _ = st.columns([1, 1, 2])
     with col_g1:
         sobrescribir = st.checkbox("Sobrescribir si existe", value=True)
         if st.button("💾 Guardar este Pareto"):
@@ -973,7 +1004,7 @@ if seleccion:
             st.download_button(
                 "⬇️ Excel del Pareto (edición)",
                 data=exportar_excel_con_grafico(tabla, titulo),
-                file_name=f"pareto_{(nombre_para_guardar or 'edicion').lower().replace(' ','_')}.xlsx",
+                file_name=f"pareto_{(nombre_para_guardar or 'edicion').lower().replace(' ', '_')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
@@ -983,12 +1014,19 @@ if seleccion:
     nombre_informe = st.text_input(
         "Nombre del informe (portada)",
         value=(nombre_para_guardar.strip() or "Pareto Comunidad"),
-        key="inf_editor_nombre"
+        key="inf_editor_nombre",
     )
+
     desgloses = ui_desgloses(tabla["descriptor"].tolist(), key_prefix="editor")
-    col_inf1, col_inf2 = st.columns([1,3])
+
+    col_inf1, col_inf2 = st.columns([1, 3])
     with col_inf1:
-        gen = st.button("📄 Generar Informe PDF (editor)", type="primary", use_container_width=True, key="btn_inf_editor")
+        gen = st.button(
+            "📄 Generar Informe PDF (editor)",
+            type="primary",
+            use_container_width=True,
+            key="btn_inf_editor",
+        )
     with col_inf2:
         st.caption("Incluye: Portada, Resumen + Gráfico + Tabla, Modalidades (si agregas) y Cierre.")
 
@@ -1001,13 +1039,14 @@ if seleccion:
             st.download_button(
                 "⬇️ Descargar Informe PDF",
                 data=pdf_bytes,
-                file_name=f"informe_{nombre_informe.lower().replace(' ','_')}.pdf",
+                file_name=f"informe_{nombre_informe.lower().replace(' ', '_')}.pdf",
                 mime="application/pdf",
                 key="dl_inf_editor",
             )
 
 else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
+
 # ============================================================================ #
 # 🧩 PARTE 10 — PORTAFOLIO, UNIFICADO Y DESCARGAS
 # ============================================================================ #
@@ -1166,6 +1205,7 @@ else:
             "Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' "
             "para habilitar el unificado."
         )
+
 
 
 
