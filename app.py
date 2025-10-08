@@ -3,11 +3,8 @@
 # ============ Encabezado, imports, config y estilos Matplotlib =============
 # ============================================================================
 
-# app.py — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF (con PÍLDORA)
-# ---------------------------------------------------------------------------------
-# Ejecuta con:
-#   streamlit run app.py
-# ---------------------------------------------------------------------------------
+# App — Pareto 80/20 + Portafolio + Unificado + Sheets + Informe PDF
+# Ejecuta: streamlit run app.py
 
 import io
 from textwrap import wrap
@@ -35,30 +32,25 @@ from reportlab.platypus import (
 from reportlab.platypus.flowables import KeepTogether
 from datetime import datetime
 
-# ----------------- CONFIG (actualizado) -----------------
+# ----------------- CONFIG (tu Sheets y pestaña) -----------------
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1XZjXQfLb5Jiptp_BXuCfg9QZNEz6ZWh9hbtp0rRAGpM/edit?usp=sharing"
-WS_PARETOS = "paretos"  # si tu pestaña se llama distinto, cámbiala aquí
+WS_PARETOS = "paretos"  # cambia si tu pestaña se llama diferente
 
 st.set_page_config(page_title="Pareto de Descriptores", layout="wide")
 
-# Paleta (verde/azul)
+# Paleta
 VERDE = "#1B9E77"
 AZUL  = "#2C7FB8"
 TEXTO = "#124559"
 GRIS  = "#6B7280"
 
-# ============== AJUSTES MATPLOTLIB (legibilidad) ==============
+# Matplotlib
 plt.rcParams.update({
-    "figure.dpi": 180,
-    "savefig.dpi": 180,
-    "axes.titlesize": 18,
-    "axes.labelsize": 13,
-    "xtick.labelsize": 10,
-    "ytick.labelsize": 11,
-    "axes.grid": True,
-    "grid.alpha": 0.25,
+    "figure.dpi": 180, "savefig.dpi": 180,
+    "axes.titlesize": 18, "axes.labelsize": 13,
+    "xtick.labelsize": 10, "ytick.labelsize": 11,
+    "axes.grid": True, "grid.alpha": 0.25,
 })
-
 # ============================================================================
 # ============================== PARTE 2/10 =================================
 # ========================= Catálogo embebido (CSV) =========================
@@ -314,7 +306,6 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
-    # --- CAMBIO: etiquetas diagonales 45° para mejor lectura ---
     ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=45, ha="right")
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
 
@@ -327,7 +318,6 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax2.axhline(80, linestyle="--", linewidth=1, color="#666666")
     st.pyplot(fig)
 
-# --- Excel export ---
 def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -381,8 +371,9 @@ def _ensure_ws(sh, title: str, header: List[str]):
     try:
         ws = sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title=title, rows=1000, cols=10)
-        ws.append_row(header); return ws
+        ws = sh.add_worksheet(title=title, rows=1000, cols=max(10, len(header)))
+        ws.append_row(header)
+        return ws
     values = ws.get_all_values()
     if not values:
         ws.append_row(header)
@@ -393,21 +384,26 @@ def _ensure_ws(sh, title: str, header: List[str]):
     return ws
 
 def sheets_cargar_portafolio() -> Dict[str, Dict[str, int]]:
+    """Lee 'paretos' (nombre, descriptor, frecuencia). Ignora vacíos y <=0."""
     try:
-        sh = _open_sheet(); ws = _ensure_ws(sh, WS_PARETOS, ["nombre","descriptor","frecuencia"])
+        sh = _open_sheet()
+        ws = _ensure_ws(sh, WS_PARETOS, ["nombre","descriptor","frecuencia"])
         rows = ws.get_all_records()
         port: Dict[str, Dict[str, int]] = {}
         for r in rows:
             nom = str(r.get("nombre","")).strip()
             desc = str(r.get("descriptor","")).strip()
             freq = int(pd.to_numeric(r.get("frecuencia",0), errors="coerce") or 0)
-            if not nom or not desc or freq <= 0: continue
-            bucket = port.setdefault(nom, {}); bucket[desc] = bucket.get(desc, 0) + freq
+            if not nom or not desc or freq <= 0: 
+                continue
+            bucket = port.setdefault(nom, {})
+            bucket[desc] = bucket.get(desc, 0) + freq
         return port
     except Exception:
         return {}
 
 def sheets_guardar_pareto(nombre: str, freq_map: Dict[str, int], sobrescribir: bool = True):
+    """Guarda filas válidas. Si 'sobrescribir', elimina solo las filas del mismo nombre."""
     sh = _open_sheet()
     ws = _ensure_ws(sh, WS_PARETOS, ["nombre","descriptor","frecuencia"])
     if sobrescribir:
@@ -417,25 +413,26 @@ def sheets_guardar_pareto(nombre: str, freq_map: Dict[str, int], sobrescribir: b
         ws.clear(); ws.update("A1", [header])
         if others: ws.append_rows(others, value_input_option="RAW")
     rows_new = [[nombre, d, int(f)] for d, f in normalizar_freq_map(freq_map).items()]
-    if rows_new: ws.append_rows(rows_new, value_input_option="RAW")
+    if rows_new:
+        ws.append_rows(rows_new, value_input_option="RAW")
 # ============================================================================
 # ============================== PARTE 6/10 =================================
 # =================== Estado de sesión + Estilos básicos PDF =================
 # ============================================================================
 
-# ---- Estado de sesión ----
+# Estado de sesión
 st.session_state.setdefault("freq_map", {})
 st.session_state.setdefault("portafolio", {})
 st.session_state.setdefault("msel", [])
 st.session_state.setdefault("reset_after_save", False)
 
-# NUEVO: si cambió la URL del Sheet, vaciar portafolio para no arrastrar datos viejos
+# Si cambia la URL del Sheet, limpiamos portafolio para no arrastrar datos viejos
 st.session_state.setdefault("sheet_url_loaded", None)
 if st.session_state["sheet_url_loaded"] != SPREADSHEET_URL:
     st.session_state["portafolio"] = {}
     st.session_state["sheet_url_loaded"] = SPREADSHEET_URL
 
-# Cargar portafolio desde Sheets solo si está vacío
+# Cargar portafolio desde Sheets sólo si está vacío
 if not st.session_state["portafolio"]:
     loaded = sheets_cargar_portafolio()
     if loaded:
@@ -448,7 +445,7 @@ if st.session_state.get("reset_after_save", False):
     st.session_state.pop("editor_freq", None)
     st.session_state["reset_after_save"] = False
 
-# ---- Estilos PDF / páginas ----
+# Estilos PDF
 PAGE_W, PAGE_H = A4
 
 def _styles():
@@ -463,7 +460,7 @@ def _styles():
     ))
     ss.add(ParagraphStyle(
         name="CoverDate", parent=ss["Normal"], fontSize=15,
-        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8   # fecha centrada
+        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8  # fecha centrada
     ))
     ss.add(ParagraphStyle(
         name="TitleBig", parent=ss["Title"], fontSize=24,
@@ -490,7 +487,6 @@ def _page_normal(_canv, _doc):
 def _page_last(canv, _doc):
     canv.setFillColor(colors.HexColor(TEXTO))
     canv.rect(0, 0, PAGE_W, 0.9*cm, fill=1, stroke=0)
-
 # ============================================================================
 # ============================== PARTE 7/10 =================================
 # ============ Imágenes para PDF (Pareto/Modalidades) y textos helper =======
@@ -505,7 +501,6 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
-    # --- CAMBIO: etiquetas diagonales 45° para el PDF ---
     ax1.set_xticklabels(_wrap_labels(df_par["descriptor"].tolist(), 24), rotation=45, ha="right")
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
     ax2 = ax1.twinx()
@@ -518,11 +513,7 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     buf = io.BytesIO(); fig.tight_layout(); fig.savefig(buf, format="PNG"); plt.close(fig)
     return buf.getvalue()
 
-# ===== MODALIDADES (incluye 'pill') =====
 def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str = "barh") -> bytes:
-    """
-    kind: 'barh' (por defecto), 'bar', 'lollipop', 'donut', 'comp100', 'pill'
-    """
     labels = [l for l, p in data_pairs if str(l).strip()]
     vals   = [float(p or 0) for l, p in data_pairs if str(l).strip()]
     if not labels:
@@ -586,54 +577,40 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             left += w
         ax.set_xlim(0, max(100, sum(vals)))
         ax.set_yticks([]); ax.set_xlabel("Porcentaje (composición)")
-        ax.set_title(title, color=TEXTO)
-        ax.grid(False)
+        ax.set_title(title, color=TEXTO); ax.grid(False)
 
     elif kind == "pill":
         fig_height = 0.9 + n*0.85
         fig, ax = plt.subplots(figsize=(10.8, fig_height))
         ax.set_xlim(0, 100); ax.set_ylim(0, n)
         ax.axis("off")
-        track_h = 0.72
-        round_r = track_h/2
-
+        track_h = 0.72; round_r = track_h/2
         for i, (lab, v) in enumerate(zip(labels, vals)):
             y = n - 1 - i + (1 - track_h)/2
-
-            track = FancyBboxPatch(
-                (0.8, y), 98.4, track_h,
-                boxstyle=f"round,pad=0,rounding_size={round_r}",
-                linewidth=1, edgecolor="#9dbbd6", facecolor="#e6f0fb"
-            )
+            track = FancyBboxPatch((0.8, y), 98.4, track_h,
+                                   boxstyle=f"round,pad=0,rounding_size={round_r}",
+                                   linewidth=1, edgecolor="#9dbbd6", facecolor="#e6f0fb")
             ax.add_patch(track)
-
             prog_w = max(0.001, min(98.4, float(v)))
-            prog = FancyBboxPatch(
-                (0.8, y), prog_w, track_h,
-                boxstyle=f"round,pad=0,rounding_size={round_r}",
-                linewidth=0, facecolor=AZUL, alpha=0.35
-            )
+            prog = FancyBboxPatch((0.8, y), prog_w, track_h,
+                                  boxstyle=f"round,pad=0,rounding_size={round_r}",
+                                  linewidth=0, facecolor=AZUL, alpha=0.35)
             ax.add_patch(prog)
-
             ax.add_patch(Circle((0.8 + round_r*0.8, y + track_h/2), round_r*0.9, color="#a3a3a3", alpha=0.6))
             ax.add_patch(Circle((0.8 + round_r*0.6, y + track_h/2), round_r*0.9, color=AZUL, alpha=0.9))
-
             badge_w = 12.0; badge_h = track_h*0.8
             badge_x = 5.0;  badge_y = y + (track_h - badge_h)/2
-            badge = FancyBboxPatch(
-                (badge_x, badge_y), badge_w, badge_h,
-                boxstyle=f"round,pad=0.25,rounding_size={badge_h/2}",
-                linewidth=1, edgecolor="#cfd8e3", facecolor="white"
-            )
+            from matplotlib.patches import FancyBboxPatch as FB
+            badge = FB((badge_x, badge_y), badge_w, badge_h,
+                       boxstyle=f"round,pad=0.25,rounding_size={badge_h/2}",
+                       linewidth=1, edgecolor="#cfd8e3", facecolor="white")
             ax.add_patch(badge)
             ax.text(badge_x + badge_w/2, y + track_h/2, f"{v:.1f}%", ha="center", va="center", fontsize=10)
-
             ax.text(badge_x + badge_w + 3.0, y + track_h/2, lab, va="center", ha="left",
                     fontsize=12, color="#0f172a")
-
         ax.set_title(title, color=TEXTO)
 
-    else:  # 'barh'
+    else:  # barh
         fig, ax = plt.subplots(figsize=(11.5, 5.4))
         y = np.arange(n)
         ax.barh(y, vals, color=colors_seq)
@@ -691,30 +668,16 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
 # ============================================================================
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
-    """
-    Cuadro simplificado: solo Descriptor, Frecuencia y %.
-    Incluye una fila final con el 'Total de respuestas tratadas'.
-    """
-    # Anchos: Descriptor más amplio para permitir wraps
-    fracs = [0.62, 0.20, 0.18]  # Descriptor, Frecuencia, %
+    """Cuadro: Descriptor | Frecuencia | %  + fila final: Total de respuestas tratadas."""
+    fracs = [0.62, 0.20, 0.18]  # anchos relativos
     col_widths = [f * doc_width for f in fracs]
-
     stys = _styles()
 
-    # Estilo de celda con ajuste de línea
-    from reportlab.lib.styles import ParagraphStyle
     cell_style = ParagraphStyle(
-        name="CellWrap",
-        parent=stys["Normal"],
-        fontSize=9.6,
-        leading=12,
-        textColor="#111111",
-        wordWrap="CJK",
-        spaceBefore=0,
-        spaceAfter=0,
+        name="CellWrap", parent=stys["Normal"], fontSize=9.6, leading=12,
+        textColor="#111111", wordWrap="CJK", spaceBefore=0, spaceAfter=0,
     )
 
-    # Encabezado (3 columnas)
     head = [
         Paragraph("Descriptor", stys["TableHead"]),
         Paragraph("Frecuencia", stys["TableHead"]),
@@ -722,7 +685,6 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     ]
     data = [head]
 
-    # Filas de datos
     total_respuestas = int(df_par["frecuencia"].sum()) if not df_par.empty else 0
     for _, r in df_par.iterrows():
         descriptor = Paragraph(str(r["descriptor"]), cell_style)
@@ -730,33 +692,27 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         pct = f'{float(r["porcentaje"]):.2f}%'
         data.append([descriptor, frecuencia, pct])
 
-    # Fila de total
     total_row = [Paragraph("<b>Total de respuestas tratadas</b>", cell_style), total_respuestas, ""]
     data.append(total_row)
     total_index = len(data) - 1
 
-    # Construcción de la tabla
     t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     style = TableStyle([
-        # Header
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor(TEXTO)),
         ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
         ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",   (0,0), (-1,0), 11),
 
-        # Cuerpo
         ("FONTSIZE",   (0,1), (-1,-1), 9.6),
-        ("ALIGN",      (0,1), (0,-1), "LEFT"),   # Descriptor
-        ("ALIGN",      (1,1), (-1,-2), "RIGHT"), # Frecuencia y %
+        ("ALIGN",      (0,1), (0,-1), "LEFT"),
+        ("ALIGN",      (1,1), (-1,-2), "RIGHT"),
         ("LEFTPADDING",(0,0), (-1,-1), 6),
         ("RIGHTPADDING",(0,0), (-1,-1), 6),
         ("VALIGN",     (0,0), (-1,-1), "MIDDLE"),
 
-        # Zebrados + grid
         ("ROWBACKGROUNDS", (0,1), (-1,-2), [colors.whitesmoke, colors.Color(0.97,0.97,0.97)]),
         ("GRID", (0,0), (-1,-1), 0.25, colors.lightgrey),
 
-        # Fila de total
         ("BACKGROUND", (0,total_index), (-1,total_index), colors.Color(0.93, 0.96, 0.99)),
         ("FONTNAME",   (0,total_index), (-1,total_index), "Helvetica-Bold"),
         ("ALIGN",      (1,total_index), (1,total_index), "RIGHT"),
@@ -785,7 +741,7 @@ def generar_pdf_informe(nombre_informe: str,
     stys = _styles()
     story: List = []
 
-    # ---------- PORTADA ----------
+    # PORTADA
     story += [NextPageTemplate("Normal")]
     story += [Spacer(1, 2.2*cm)]
     story += [Paragraph(f"Informe de Resultados Diagrama de Pareto - {nombre_informe}", stys["CoverTitle"])]
@@ -793,7 +749,7 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
     story += [PageBreak()]
 
-    # ---------- INTRODUCCIÓN (permanece aquí si ya la venías usando) ----------
+    # INTRODUCCIÓN (centrada tras portada)
     story += [Paragraph("Introducción", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(
         "Este informe presenta un análisis tipo <b>Pareto (80/20)</b> sobre los descriptores seleccionados. "
@@ -803,7 +759,7 @@ def generar_pdf_informe(nombre_informe: str,
         stys["Body"]
     ), Spacer(1, 0.35*cm)]
 
-    # ---------- RESULTADOS ----------
+    # RESULTADOS GENERALES
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
@@ -818,7 +774,7 @@ def generar_pdf_informe(nombre_informe: str,
     story.append(_tabla_resultados_flowable(df_par, doc.width))
     story += [Spacer(1, 0.25*cm)]
 
-    # ---------- MODALIDADES (título + texto + gráfico SIEMPRE juntos) ----------
+    # MODALIDADES (cada bloque va junto)
     for sec in desgloses:
         descriptor = sec.get("descriptor", "").strip()
         rows = sec.get("rows", [])
@@ -836,7 +792,7 @@ def generar_pdf_informe(nombre_informe: str,
         ]
         story += [KeepTogether(bloque)]
 
-    # ---------- CIERRE ----------
+    # CIERRE
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
         Paragraph("Conclusiones y recomendaciones", stys["TitleBigCenter"]),
@@ -856,8 +812,6 @@ def generar_pdf_informe(nombre_informe: str,
     doc.build(story)
     return buf.getvalue()
 
-
-# === Helpers UI formulario de desgloses (con selector de tipo de gráfico) ===
 def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
     max_secs = max(0, len(descriptor_list))
@@ -900,7 +854,6 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                                   "rows": de.to_dict(orient="records"),
                                   "chart": chart_kind})
     return desgloses
-
 # ============================================================================
 # ============================== PARTE 9/10 =================================
 # ======================= UI principal (Editor Pareto/Guardado) ==============
@@ -908,7 +861,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
 
 st.title("Pareto de Descriptores")
 
-# Cabecera con controles y utilidades
+# Controles superiores
 c_t1, c_t2, c_t3, c_t4 = st.columns([2, 1, 1, 1])
 with c_t1:
     titulo = st.text_input("Título del Pareto (opcional)", value="Pareto Comunidad")
@@ -925,7 +878,7 @@ with c_t4:
         st.info("Portafolio de la sesión limpiado.")
         st.rerun()
 
-# Selección de descriptores y edición de frecuencias
+# Selección de descriptores
 cat_df = pd.DataFrame(CATALOGO).sort_values(["categoria", "descriptor"]).reset_index(drop=True)
 opciones = cat_df["descriptor"].tolist()
 seleccion = st.multiselect(
@@ -952,20 +905,19 @@ if seleccion:
         },
     )
 
-    # Persistir frecuencias en el estado
+    # Persistir frecuencias
     for _, row in edit.iterrows():
         st.session_state["freq_map"][row["descriptor"]] = int(row["frecuencia"])
 
-    # Armar DataFrame para el Pareto
+    # DF para Pareto
     df_in = edit[["descriptor", "categoria"]].copy()
     df_in["frecuencia"] = df_in["descriptor"].map(st.session_state["freq_map"]).fillna(0).astype(int)
 
     st.subheader("3) Pareto (en edición)")
     tabla = calcular_pareto(df_in)
 
-    mostrar = tabla.copy()[
-        ["categoria", "descriptor", "frecuencia", "porcentaje", "pct_acum", "acumulado", "segmento"]
-    ].rename(columns={"pct_acum": "porcentaje acumulado"})
+    mostrar = tabla.copy()[["categoria","descriptor","frecuencia","porcentaje","pct_acum","acumulado","segmento"]]
+    mostrar = mostrar.rename(columns={"pct_acum": "porcentaje acumulado"})
     if not mostrar.empty:
         mostrar["porcentaje"] = mostrar["porcentaje"].map(lambda x: f"{x:.2f}%")
         mostrar["porcentaje acumulado"] = mostrar["porcentaje acumulado"].map(lambda x: f"{x:.2f}%")
@@ -981,7 +933,7 @@ if seleccion:
         st.markdown("**Gráfico de Pareto**")
         dibujar_pareto(tabla, titulo)
 
-    # Guardado y descarga
+    # Guardar / Descargar
     st.subheader("4) Guardar / Descargar")
     col_g1, col_g2, _ = st.columns([1, 1, 2])
     with col_g1:
@@ -1008,7 +960,7 @@ if seleccion:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-    # ===== Informe PDF desde el editor =====
+    # Informe PDF (del editor)
     st.markdown("---")
     st.header("🧾 Elaborar Informe PDF (desde el editor)")
     nombre_informe = st.text_input(
@@ -1016,19 +968,13 @@ if seleccion:
         value=(nombre_para_guardar.strip() or "Pareto Comunidad"),
         key="inf_editor_nombre",
     )
-
     desgloses = ui_desgloses(tabla["descriptor"].tolist(), key_prefix="editor")
 
     col_inf1, col_inf2 = st.columns([1, 3])
     with col_inf1:
-        gen = st.button(
-            "📄 Generar Informe PDF (editor)",
-            type="primary",
-            use_container_width=True,
-            key="btn_inf_editor",
-        )
+        gen = st.button("📄 Generar Informe PDF (editor)", type="primary", use_container_width=True, key="btn_inf_editor")
     with col_inf2:
-        st.caption("Incluye: Portada, Resumen + Gráfico + Tabla, Modalidades (si agregas) y Cierre.")
+        st.caption("Incluye: Portada, Introducción, Resumen + Gráfico + Tabla (solo Frecuencia y %), Modalidades y Cierre.")
 
     if gen:
         if tabla.empty:
@@ -1046,9 +992,9 @@ if seleccion:
 
 else:
     st.info("Selecciona al menos un descriptor para continuar. Tus frecuencias se conservarán si luego agregas más descriptores.")
-
 # ============================================================================ #
-# 🧩 PARTE 10 — PORTAFOLIO, UNIFICADO Y DESCARGAS
+# =============================== PARTE 10/10 =============================== #
+# ================ PORTAFOLIO, UNIFICADO Y DESCARGAS (PDF/Excel) ============ #
 # ============================================================================ #
 
 st.markdown("---")
@@ -1071,7 +1017,6 @@ else:
         st.caption(f"Total de paretos guardados: **{len(nombres)}**")
 
     st.markdown("### Paretos guardados")
-
     for nom in nombres:
         freq_map = st.session_state["portafolio"][nom]
         meta = info_pareto(freq_map)
@@ -1079,8 +1024,7 @@ else:
             df_base = df_desde_freq_map(freq_map)
             tabla_g = calcular_pareto(df_base)
 
-            mostrar_g = tabla_g.copy()[["categoria", "descriptor", "frecuencia",
-                                        "porcentaje", "pct_acum", "acumulado", "segmento"]]
+            mostrar_g = tabla_g.copy()[["categoria","descriptor","frecuencia","porcentaje","pct_acum","acumulado","segmento"]]
             mostrar_g = mostrar_g.rename(columns={"pct_acum": "porcentaje acumulado"})
             if not mostrar_g.empty:
                 mostrar_g["porcentaje"] = mostrar_g["porcentaje"].map(lambda x: f"{x:.2f}%")
@@ -1154,8 +1098,7 @@ else:
         df_unif = df_desde_freq_map(combinado)
         tabla_unif = calcular_pareto(df_unif)
 
-        mostrar_u = tabla_unif.copy()[["categoria", "descriptor", "frecuencia",
-                                       "porcentaje", "pct_acum", "acumulado", "segmento"]]
+        mostrar_u = tabla_unif.copy()[["categoria","descriptor","frecuencia","porcentaje","pct_acum","acumulado","segmento"]]
         mostrar_u = mostrar_u.rename(columns={"pct_acum": "porcentaje acumulado"})
         if not mostrar_u.empty:
             mostrar_u["porcentaje"] = mostrar_u["porcentaje"].map(lambda x: f"{x:.2f}%")
@@ -1181,7 +1124,6 @@ else:
                 key="dl_unificado",
             )
 
-        # ===== Informe PDF Unificado =====
         st.markdown("### 🧾 Elaborar Informe PDF (Unificado / General)")
         nombre_inf_unif = st.text_input(
             "Nombre del informe",
@@ -1201,10 +1143,8 @@ else:
             )
 
     else:
-        st.info(
-            "Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' "
-            "para habilitar el unificado."
-        )
+        st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
 
 
 
