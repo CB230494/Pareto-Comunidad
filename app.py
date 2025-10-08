@@ -725,7 +725,7 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     head = [
         Paragraph("Descriptor", stys["TableHead"]),
         Paragraph("Frecuencia", stys["TableHead"]),
-        Paragraph("%", stys["TableHead"]),
+        Paragraph("Porcentaje", stys["TableHead"]),
     ]
     data = [head]
 
@@ -1209,6 +1209,7 @@ else:
 
     else:
         st.info("Selecciona 2+ paretos en el multiselect o usa el botón 'Unificar TODOS' para habilitar el unificado.")
+
 
 
 
