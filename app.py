@@ -629,42 +629,56 @@ def _page_last(canv, _doc):
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     """
     Genera el PNG del diagrama de Pareto para el PDF.
-    Etiquetas 90° (verticales) y ancho dinámico para evitar choques.
+    Etiquetas verticales (90°) + ancho/altura dinámicos y
+    margen inferior dinámico para evitar recortes (clipping).
     """
     n_labels = len(df_par)
+    labels   = [str(t) for t in df_par["descriptor"].tolist()]
+    max_len  = max((len(s) for s in labels), default=10)
+
     x        = np.arange(n_labels)
     freqs    = df_par["frecuencia"].to_numpy()
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
 
+    # Ancho proporcional a #barras; altura un poco mayor para etiquetas largas
     fig_w = max(12.0, 0.6 * n_labels)
+    fig_h = 6.2 if max_len < 45 else (6.8 if max_len < 70 else 7.4)
     fs    = 9 if n_labels > 28 else 10
 
-    fig, ax1 = plt.subplots(figsize=(fig_w, 5.8))
+    fig, ax1 = plt.subplots(figsize=(fig_w, fig_h))
+
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
-    ax1.set_xticklabels(
-        [str(t) for t in df_par["descriptor"].tolist()],
-        rotation=90, ha="center", va="top", fontsize=fs
-    )
-    fig.subplots_adjust(bottom=0.36)
+    ax1.set_xticklabels(labels, rotation=90, ha="center", va="top", fontsize=fs)
+
+    # --- margen inferior dinámico (evita que se corte texto) ---
+    # base 0.30 + incremento por tamaño de texto y cantidad de barras
+    bottom = 0.30 + 0.0045 * min(max_len, 90) + 0.0022 * min(n_labels, 70)
+    bottom = min(bottom, 0.80)  # no exceder 80% del alto
+    fig.subplots_adjust(bottom=bottom)
+
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
 
+    # Segundo eje: % acumulado
     ax2 = ax1.twinx()
     ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
     ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
 
+    # Corte 80%
     if (df_par["segmento_real"] == "80%").any():
         cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
         ax1.axvline(cut_idx + 0.5, linestyle=":", color="k")
     ax2.axhline(80, linestyle="--", linewidth=1, color="#666666")
 
     buf = io.BytesIO()
-    fig.tight_layout()
+    # tight_layout con rect preserva el margen inferior ya fijado
+    fig.tight_layout(rect=[0, bottom, 1, 1])
     fig.savefig(buf, format="PNG")
     plt.close(fig)
     return buf.getvalue()
+
 
 # --- Etiquetado temático (se mantiene interno) ---
 def _tema_descriptor(descriptor: str) -> str:
@@ -679,6 +693,7 @@ def _tema_descriptor(descriptor: str) -> str:
         return "condiciones urbanas / entorno"
     return "seguridad y convivencia"
 
+
 # --- RESUMEN: sin el texto “(ámbito: …)” ---
 def _resumen_texto(df_par: pd.DataFrame) -> str:
     if df_par.empty:
@@ -692,6 +707,7 @@ def _resumen_texto(df_par: pd.DataFrame) -> str:
             f"({float(top['porcentaje']):.2f}%). El punto de corte del <b>80%</b> se alcanza con "
             f"<b>{idx80}</b> descriptores, útiles para la priorización operativa.")
 
+
 # --- TEXTO DE MODALIDADES ---
 def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
     pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
@@ -702,6 +718,7 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
     top_txt = "; ".join([f"<b>{l}</b> ({p:.1f}%)" for l, p in pares_orden[:2]])
     return (f"En <b>{descriptor}</b> destacan: {top_txt}. "
             "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
+
 
 # --- Gráfico de modalidades (igual que antes) ---
 def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str = "barh") -> bytes:
@@ -829,6 +846,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
     fig.savefig(buf, format="PNG")
     plt.close(fig)
     return buf.getvalue()
+
 
 # ============================================================================
 # ============================== PARTE 8/10 =================================
@@ -1262,6 +1280,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
