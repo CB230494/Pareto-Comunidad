@@ -329,26 +329,25 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
 
-    # --- Ajustes dinámicos (evita choque de textos) ---
-    if n_labels <= 10:
-        rot, fs, fig_w, wrap_w = 0, 12, 10, 26
-    elif n_labels <= 20:
-        rot, fs, fig_w, wrap_w = 30, 11, 12, 24
-    elif n_labels <= 35:
-        rot, fs, fig_w, wrap_w = 45, 10, 14, 22
-    elif n_labels <= 50:
-        rot, fs, fig_w, wrap_w = 55, 9,  17, 20
-    else:
-        rot, fs, fig_w, wrap_w = 65, 8,  20, 18  # muchos descriptores
+    # --- Etiquetas completamente verticales + más espacio horizontal ---
+    # Ancho proporcional al número de barras para evitar amontonamiento
+    fig_w = max(12.0, 0.6 * n_labels)     # más barras => más ancho
+    fs    = 9 if n_labels > 28 else 10    # fuente más pequeña si hay demasiadas
 
-    fig, ax1 = plt.subplots(figsize=(fig_w, 6.2))
+    fig, ax1 = plt.subplots(figsize=(fig_w, 6.6))
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
+
+    # Etiquetas 90° (verticales), sin wrap (evita choques),
+    # centradas en cada barra, con margen inferior extra.
     ax1.set_xticklabels(
-        _wrap_labels(df_par["descriptor"].tolist(), wrap_w),
-        rotation=rot, ha="right", fontsize=fs
+        [str(t) for t in df_par["descriptor"].tolist()],
+        rotation=90, ha="center", va="top", fontsize=fs
     )
+    # Margen adicional para que quepan las etiquetas verticales
+    fig.subplots_adjust(bottom=0.32)
+
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO, fontsize=16)
 
     # Línea de % acumulado
@@ -357,6 +356,7 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax2.set_ylabel("% acumulado")
     ax2.set_ylim(0, 110)
 
+    # Corte 80%
     if (df_par["segmento_real"] == "80%").any():
         cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
         ax1.axvline(cut_idx + 0.5, linestyle=":", color="k")
@@ -433,6 +433,7 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         chart.set_size({"width": 1180, "height": 420})
         ws.insert_chart("I2", chart)
     return output.getvalue()
+
 # ============================================================================
 # ============================== PARTE 5/10 =================================
 # ======================== Conectores Google Sheets (gspread) ================
@@ -627,8 +628,8 @@ def _page_last(canv, _doc):
 
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     """
-    Genera el PNG del diagrama de Pareto para incrustar en el PDF.
-    Ajustes dinámicos de tamaño, rotación y wrapping para evitar choque de etiquetas.
+    Genera el PNG del diagrama de Pareto para el PDF.
+    Etiquetas 90° (verticales) y ancho dinámico para evitar choques.
     """
     n_labels = len(df_par)
     x        = np.arange(n_labels)
@@ -636,35 +637,24 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
 
-    # --- Ajustes dinámicos (igual que en la app) ---
-    if n_labels <= 10:
-        rot, fs, fig_w, wrap_w = 0, 12, 10, 26
-    elif n_labels <= 20:
-        rot, fs, fig_w, wrap_w = 30, 11, 12, 24
-    elif n_labels <= 35:
-        rot, fs, fig_w, wrap_w = 45, 10, 14, 22
-    elif n_labels <= 50:
-        rot, fs, fig_w, wrap_w = 55, 9,  17, 20
-    else:
-        rot, fs, fig_w, wrap_w = 65, 8,  20, 18
+    fig_w = max(12.0, 0.6 * n_labels)
+    fs    = 9 if n_labels > 28 else 10
 
-    fig, ax1 = plt.subplots(figsize=(fig_w, 5.6))
+    fig, ax1 = plt.subplots(figsize=(fig_w, 5.8))
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
     ax1.set_xticklabels(
-        _wrap_labels(df_par["descriptor"].tolist(), wrap_w),
-        rotation=rot, ha="right", fontsize=fs
+        [str(t) for t in df_par["descriptor"].tolist()],
+        rotation=90, ha="center", va="top", fontsize=fs
     )
+    fig.subplots_adjust(bottom=0.36)
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
 
-    # Línea de % acumulado
     ax2 = ax1.twinx()
     ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
-    ax2.set_ylabel("% acumulado")
-    ax2.set_ylim(0, 110)
+    ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
 
-    # Corte 80%
     if (df_par["segmento_real"] == "80%").any():
         cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
         ax1.axvline(cut_idx + 0.5, linestyle=":", color="k")
@@ -676,22 +666,20 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     plt.close(fig)
     return buf.getvalue()
 
-
-# --- Clasificación temática (no se imprime, pero puede usarse internamente) ---
+# --- Etiquetado temático (se mantiene interno) ---
 def _tema_descriptor(descriptor: str) -> str:
     d = descriptor.lower()
     if "droga" in d or "búnker" in d or "bunker" in d or "narco" in d or "venta de drogas" in d:
         return "drogas"
-    if any(k in d for k in ["robo", "hurto", "asalto", "vehícul", "comercio"]):
+    if "robo" in d or "hurto" in d or "asalto" in d or "vehícul" in d or "comercio" in d:
         return "delitos contra la propiedad"
-    if any(k in d for k in ["violencia", "lesion", "homicidio"]):
+    if "violencia" in d or "lesion" in d or "homicidio" in d:
         return "violencia"
-    if any(k in d for k in ["infraestructura", "alumbrado", "lotes"]):
+    if "infraestructura" in d or "alumbrado" in d or "lotes" in d:
         return "condiciones urbanas / entorno"
     return "seguridad y convivencia"
 
-
-# --- RESUMEN en texto para el PDF ---
+# --- RESUMEN: sin el texto “(ámbito: …)” ---
 def _resumen_texto(df_par: pd.DataFrame) -> str:
     if df_par.empty:
         return "Sin datos disponibles."
@@ -699,16 +687,12 @@ def _resumen_texto(df_par: pd.DataFrame) -> str:
     n = len(df_par)
     top = df_par.iloc[0]
     idx80 = int(np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max() + 1) if (df_par["segmento_real"]=="80%").any() else 0
-    return (
-        f"Se registran <b>{total}</b> hechos distribuidos en <b>{n}</b> descriptores. "
-        f"El descriptor de mayor incidencia es <b>{top['descriptor']}</b>, con "
-        f"<b>{int(top['frecuencia'])}</b> casos ({float(top['porcentaje']):.2f}%). "
-        f"El punto de corte del <b>80%</b> se alcanza con <b>{idx80}</b> descriptores, "
-        f"útiles para la priorización operativa."
-    )
+    return (f"Se registran <b>{total}</b> hechos distribuidos en <b>{n}</b> descriptores. "
+            f"El descriptor de mayor incidencia es <b>{top['descriptor']}</b>, con <b>{int(top['frecuencia'])}</b> casos "
+            f"({float(top['porcentaje']):.2f}%). El punto de corte del <b>80%</b> se alcanza con "
+            f"<b>{idx80}</b> descriptores, útiles para la priorización operativa.")
 
-
-# --- TEXTO descriptivo de Modalidades (para cada bloque) ---
+# --- TEXTO DE MODALIDADES ---
 def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
     pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
     pares_orden = sorted(pares_filtrados, key=lambda x: x[1], reverse=True)
@@ -719,15 +703,13 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
     return (f"En <b>{descriptor}</b> destacan: {top_txt}. "
             "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
 
-
-# --- Gráfico de Modalidades (varias representaciones) ---
+# --- Gráfico de modalidades (igual que antes) ---
 def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str = "barh") -> bytes:
     labels = [l for l, p in data_pairs if str(l).strip()]
     vals   = [float(p or 0) for l, p in data_pairs if str(l).strip()]
     if not labels:
         labels, vals = ["Sin datos"], [100.0]
 
-    # Ordenar de mayor a menor
     order = np.argsort(vals)[::-1]
     labels = [labels[i] for i in order]
     vals   = [vals[i]   for i in order]
@@ -737,7 +719,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
     from matplotlib.patches import FancyBboxPatch, Circle
 
     cmap = mpl.cm.get_cmap("Blues")
-    colors_seq = [cmap(0.35 + 0.5 * (i / max(1, n - 1))) for i in range(n)]
+    colors_seq = [cmap(0.35 + 0.5*(i/max(1, n-1))) for i in range(n)]
 
     if kind == "donut":
         fig, ax = plt.subplots(figsize=(7.8, 5.4))
@@ -748,8 +730,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             colors=colors_seq
         )
         ax.legend(wedges, [f"{l} ({v:.1f}%)" for l, v in zip(labels, vals)],
-                  title="Modalidades", loc="center left",
-                  bbox_to_anchor=(1.02, 0.5), fontsize=9)
+                  title="Modalidades", loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=9)
         ax.set_title(title, color=TEXTO)
 
     elif kind == "lollipop":
@@ -760,8 +741,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.set_yticks(y)
         ax.set_yticklabels(_wrap_labels(labels, 35))
         ax.invert_yaxis()
-        ax.set_xlabel("Porcentaje")
-        ax.set_xlim(0, max(100, max(vals) * 1.05))
+        ax.set_xlabel("Porcentaje"); ax.set_xlim(0, max(100, max(vals)*1.05))
         for i, v in enumerate(vals):
             ax.text(v + 1, i, f"{v:.1f}%", va="center", fontsize=10)
         ax.set_title(title, color=TEXTO)
@@ -772,10 +752,9 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.bar(x, vals, color=colors_seq)
         ax.set_xticks(x)
         ax.set_xticklabels(_wrap_labels(labels, 20), rotation=0)
-        ax.set_ylabel("Porcentaje")
-        ax.set_ylim(0, max(100, max(vals) * 1.15))
+        ax.set_ylabel("Porcentaje"); ax.set_ylim(0, max(100, max(vals)*1.15))
         for i, v in enumerate(vals):
-            ax.text(i, v + max(vals) * 0.03, f"{v:.1f}%", ha="center", fontsize=10)
+            ax.text(i, v + max(vals)*0.03, f"{v:.1f}%", ha="center", fontsize=10)
         ax.set_title(title, color=TEXTO)
 
     elif kind == "comp100":
@@ -788,23 +767,20 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
                 ax.text(left + w/2, 0, f"{lab}\n{v:.1f}%", va="center", ha="center", fontsize=9, color="white")
             left += w
         ax.set_xlim(0, max(100, sum(vals)))
-        ax.set_yticks([])
-        ax.set_xlabel("Porcentaje (composición)")
+        ax.set_yticks([]); ax.set_xlabel("Porcentaje (composición)")
         ax.set_title(title, color=TEXTO)
         ax.grid(False)
 
     elif kind == "pill":
-        fig_height = 0.9 + n * 0.85
+        fig_height = 0.9 + n*0.85
         fig, ax = plt.subplots(figsize=(10.8, fig_height))
         ax.set_xlim(0, 100); ax.set_ylim(0, n)
         ax.axis("off")
         track_h = 0.72
-        round_r = track_h / 2
+        round_r = track_h/2
 
         for i, (lab, v) in enumerate(zip(labels, vals)):
-            y = n - 1 - i + (1 - track_h) / 2
-
-            # Pista
+            y = n - 1 - i + (1 - track_h)/2
             track = FancyBboxPatch(
                 (0.8, y), 98.4, track_h,
                 boxstyle=f"round,pad=0,rounding_size={round_r}",
@@ -812,7 +788,6 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             )
             ax.add_patch(track)
 
-            # Progreso
             prog_w = max(0.001, min(98.4, float(v)))
             prog = FancyBboxPatch(
                 (0.8, y), prog_w, track_h,
@@ -821,22 +796,22 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             )
             ax.add_patch(prog)
 
-            # Icono + badge %
-            ax.add_patch(Circle((0.8 + round_r * 0.6, y + track_h / 2), round_r * 0.9, color=AZUL, alpha=0.9))
-            badge_w = 12.0; badge_h = track_h * 0.8
-            badge_x = 5.0;  badge_y = y + (track_h - badge_h) / 2
+            ax.add_patch(Circle((0.8 + round_r*0.6, y + track_h/2), round_r*0.9, color=AZUL, alpha=0.9))
+            badge_w = 12.0; badge_h = track_h*0.8
+            badge_x = 5.0;  badge_y = y + (track_h - badge_h)/2
             badge = FancyBboxPatch(
                 (badge_x, badge_y), badge_w, badge_h,
                 boxstyle=f"round,pad=0.25,rounding_size={badge_h/2}",
                 linewidth=1, edgecolor="#cfd8e3", facecolor="white"
             )
             ax.add_patch(badge)
-            ax.text(badge_x + badge_w / 2, y + track_h / 2, f"{v:.1f}%", ha="center", va="center", fontsize=10)
-            ax.text(badge_x + badge_w + 3.0, y + track_h / 2, lab, va="center", ha="left", fontsize=12, color="#0f172a")
+            ax.text(badge_x + badge_w/2, y + track_h/2, f"{v:.1f}%", ha="center", va="center", fontsize=10)
+            ax.text(badge_x + badge_w + 3.0, y + track_h/2, lab, va="center", ha="left",
+                    fontsize=12, color="#0f172a")
 
         ax.set_title(title, color=TEXTO)
 
-    else:  # 'barh' por defecto
+    else:  # 'barh'
         fig, ax = plt.subplots(figsize=(11.5, 5.4))
         y = np.arange(n)
         ax.barh(y, vals, color=colors_seq)
@@ -844,7 +819,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.set_yticklabels(_wrap_labels(labels, 35))
         ax.invert_yaxis()
         ax.set_xlabel("Porcentaje")
-        ax.set_xlim(0, max(100, max(vals) * 1.05))
+        ax.set_xlim(0, max(100, max(vals)*1.05))
         for i, v in enumerate(vals):
             ax.text(v + 1, i, f"{v:.1f}%", va="center", fontsize=10)
         ax.set_title(title, color=TEXTO)
@@ -1191,7 +1166,8 @@ with tab_portafolio:
                 dibujar_pareto(dfp, nombre)
                 st.caption(f"Total de respuestas tratadas: {int(dfp['frecuencia'].sum())}")
 
-                colA, colB = st.columns(2)
+                # Acciones
+                colA, colB, colC = st.columns([1,1,2])
                 with colA:
                     st.download_button(
                         "📥 Excel con gráfico",
@@ -1209,6 +1185,24 @@ with tab_portafolio:
                         else:
                             st.warning(f"El Pareto '{nombre}' se eliminó localmente, pero no pudo borrarse en Sheets.")
                         st.experimental_rerun()
+                with colC:
+                    try:
+                        pop = st.popover("📄 Informe PDF de este Pareto")
+                    except Exception:
+                        pop = st.expander("📄 Informe PDF de este Pareto", expanded=False)
+                    with pop:
+                        nombre_inf_ind = st.text_input("Nombre del informe", value=f"{nombre}", key=f"inf_nom_{nombre}")
+                        desgloses_ind = ui_desgloses(dfp["descriptor"].tolist(), key_prefix=f"inf_{nombre}")
+                        if st.button("Generar PDF", key=f"btn_inf_{nombre}"):
+                            pdf_bytes = generar_pdf_informe(nombre_inf_ind, dfp, desgloses_ind)
+                            if pdf_bytes:
+                                st.download_button(
+                                    "⬇️ Descargar PDF",
+                                    data=pdf_bytes,
+                                    file_name=f"informe_{nombre.lower().replace(' ', '_')}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_inf_{nombre}",
+                                )
 
 # ---------------------------------------------------------------------------
 # TAB 3 — Informe unificado
@@ -1246,6 +1240,7 @@ with tab_unificado:
                         file_name="Informe_Pareto_Unificado.pdf",
                         mime="application/pdf"
                     )
+
 # ============================================================================
 # ============================== PARTE 10/10 ================================
 # ======================== Créditos y limpieza final ========================
@@ -1267,5 +1262,6 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
