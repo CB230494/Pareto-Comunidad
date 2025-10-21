@@ -318,21 +318,27 @@ def _wrap_labels(labels: List[str], width: int = 22) -> List[str]:
 # ====== Gráfico Pareto (UI) + Exportación Excel con gráfico combinado ======
 # ============================================================================
 
-def _wrap_for_multi_lines(labels: List[str]) -> List[str]:
-    """Envuelve etiquetas para que, aún con rotación 90°, queden en 2–3 líneas."""
+def _wrap_for_two_lines(labels: List[str]) -> List[str]:
+    """Envuelve etiquetas en máximo 2 líneas (ajuste dinámico)."""
     if not labels:
         return labels
     max_len = max(len(str(x)) for x in labels)
-    # Ancho de corte buscando 2–3 líneas (aprox)
-    if max_len > 70:
-        w = 18
-    elif max_len > 50:
+    # Establecemos el ancho según longitud promedio
+    if max_len > 60:
+        w = 25
+    elif max_len > 40:
+        w = 20
+    elif max_len > 25:
         w = 16
-    elif max_len > 35:
-        w = 14
     else:
-        w = 12
-    return _wrap_labels(labels, width=w)
+        w = 14
+    wrapped = []
+    for label in labels:
+        parts = _wrap_labels([label], width=w)
+        if len(parts) > 2:
+            parts = parts[:2]
+        wrapped.append("\n".join(parts))
+    return wrapped
 
 def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     if df_par.empty:
@@ -345,9 +351,8 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
     labels   = [str(t) for t in df_par["descriptor"].tolist()]
-    labels_w = _wrap_for_multi_lines(labels)
+    labels_w = _wrap_for_two_lines(labels)
 
-    # Ancho dinámico (similar a la app original), altura generosa
     fig_w = max(12.0, 0.60 * n_labels)
     fs    = 9 if n_labels > 28 else 10
 
@@ -355,9 +360,8 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
     ax1.bar(x, freqs, color=colors_b)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
-    # Vertical, pero envuelto a 2–3 líneas
     ax1.set_xticklabels(labels_w, rotation=90, ha="center", va="top", fontsize=fs)
-    fig.subplots_adjust(bottom=0.33)  # espacio extra para etiquetas
+    fig.subplots_adjust(bottom=0.30)
 
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO, fontsize=16)
 
@@ -373,6 +377,7 @@ def dibujar_pareto(df_par: pd.DataFrame, titulo: str):
 
     fig.tight_layout()
     st.pyplot(fig)
+
 
 
 def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
@@ -635,30 +640,36 @@ def _page_last(canv, _doc):
 # ============ Imágenes para PDF (Pareto/Modalidades) y textos helper =======
 # ============================================================================
 
-def _wrap_for_multi_lines(labels: List[str]) -> List[str]:
+def _wrap_for_two_lines(labels: List[str]) -> List[str]:
+    """Envuelve etiquetas en máximo 2 líneas."""
     if not labels:
         return labels
     max_len = max(len(str(x)) for x in labels)
-    if max_len > 70:
-        w = 18
-    elif max_len > 50:
+    if max_len > 60:
+        w = 25
+    elif max_len > 40:
+        w = 20
+    elif max_len > 25:
         w = 16
-    elif max_len > 35:
-        w = 14
     else:
-        w = 12
-    return _wrap_labels(labels, width=w)
+        w = 14
+    result = []
+    for label in labels:
+        parts = _wrap_labels([label], width=w)
+        if len(parts) > 2:
+            parts = parts[:2]
+        result.append("\n".join(parts))
+    return result
 
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     """
     PNG del Pareto para PDF:
-    - Igual “look” que en la app
-    - Etiquetas 90° pero **envueltas** a 2–3 líneas
-    - bbox_inches='tight' para quitar aire
+    - Etiquetas 90° a 2 líneas
+    - bbox_inches='tight' para eliminar aire
     """
     n_labels = len(df_par)
     labels   = [str(t) for t in df_par["descriptor"].tolist()]
-    labels_w = _wrap_for_multi_lines(labels)
+    labels_w = _wrap_for_two_lines(labels)
 
     x        = np.arange(n_labels)
     freqs    = df_par["frecuencia"].to_numpy()
@@ -691,6 +702,7 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     fig.savefig(buf, format="PNG", dpi=dpi, bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
     return buf.getvalue()
+
 
 
 # --- Etiquetado temático (se mantiene interno) ---
@@ -986,7 +998,7 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
-    # --- Gráfico Pareto a ancho completo con altura proporcional (PNG recortado tight) ---
+    # --- Gráfico Pareto a ancho completo con altura proporcional ---
     from PIL import Image as PILImage
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
     with io.BytesIO(pareto_png) as _b:
@@ -996,7 +1008,7 @@ def generar_pdf_informe(nombre_informe: str,
     width_pts  = doc.width
     height_pts = (h_px / w_px) * width_pts
 
-    # 1) Bloque con el gráfico + nota (siempre juntos)
+    # 1) Gráfico + descripción siempre juntos
     story.append(KeepTogether([
         RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts),
         Spacer(1, 0.30*cm),
@@ -1007,19 +1019,15 @@ def generar_pdf_informe(nombre_informe: str,
         ),
     ]))
 
-    # 2) Decidir si la tabla va en la misma página o movemos TODO a la siguiente
-    filas = len(df_par)
-    # Umbral prudente: con muchos descriptores + etiquetas largas el gráfico ocupa bastante.
-    # Si hay 12 o más filas, forzamos salto antes de la tabla para que NO se corte.
-    if filas >= 12:
+    # 2) Salto de página si el gráfico es largo
+    if len(df_par) >= 12:
         story.append(PageBreak())
 
-    # Tabla SIEMPRE en un KeepTogether: si no cabe al final de la página, se mueve completa.
+    # 3) Tabla siempre en bloque único (no se corta)
     story.append(KeepTogether([
         Spacer(1, 0.25*cm),
         _tabla_resultados_flowable(df_par, doc.width),
     ]))
-
 
 
     # ---------- MODALIDADES ----------
@@ -1311,6 +1319,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
