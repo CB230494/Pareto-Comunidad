@@ -1256,7 +1256,7 @@ st.markdown("""
 <div style="text-align:center; font-size:14px; color:gray;">
 Desarrollado para la Estrategia <b>Sembremos Seguridad</b><br>
 Aplicación de análisis Pareto 80/20 con Google Sheets + ReportLab<br>
-Versión 2025 — Integración completa por ETechLegal ⚙️
+Versión 2025⚙️
 </div>
 """, unsafe_allow_html=True)
 
@@ -1267,4 +1267,5 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
