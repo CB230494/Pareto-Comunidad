@@ -1151,7 +1151,7 @@ with tab_editor:
                     sheets_guardar_pareto(nombre_pareto, freq_map, sobrescribir=True)
                     st.success(f"Pareto '{nombre_pareto}' guardado correctamente.")
                     st.session_state["reset_after_save"] = True
-                    st.experimental_rerun()
+                    st.rerun()  # ✅ reemplazo de experimental_rerun
                 else:
                     st.warning("Asigna un nombre al Pareto antes de guardar.")
         with col2:
@@ -1202,7 +1202,7 @@ with tab_portafolio:
                             st.success(f"El Pareto '{nombre}' fue eliminado del sistema y de Google Sheets.")
                         else:
                             st.warning(f"El Pareto '{nombre}' se eliminó localmente, pero no pudo borrarse en Sheets.")
-                        st.experimental_rerun()
+                        st.rerun()  # ✅ reemplazo de experimental_rerun
                 with colC:
                     try:
                         pop = st.popover("📄 Informe PDF de este Pareto")
@@ -1280,6 +1280,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
