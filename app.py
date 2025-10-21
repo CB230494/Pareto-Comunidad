@@ -628,9 +628,11 @@ def _page_last(canv, _doc):
 
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     """
-    Genera el PNG del diagrama de Pareto para el PDF.
-    Etiquetas verticales (90°) + ancho/altura dinámicos y
-    margen inferior dinámico para evitar recortes (clipping).
+    Genera el PNG del diagrama de Pareto para el PDF en ALTA FIDELIDAD.
+    - Etiquetas verticales (90°)
+    - Tamaño de figura dinámico (ancho/alto)
+    - Margen inferior proporcional a longitud de etiquetas y # de barras
+    - DPI alto para legibilidad
     """
     n_labels = len(df_par)
     labels   = [str(t) for t in df_par["descriptor"].tolist()]
@@ -641,41 +643,45 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
 
-    # Ancho proporcional a #barras; altura un poco mayor para etiquetas largas
-    fig_w = max(12.0, 0.6 * n_labels)
-    fig_h = 6.2 if max_len < 45 else (6.8 if max_len < 70 else 7.4)
-    fs    = 9 if n_labels > 28 else 10
+    # --- Tamaño de figura (en pulgadas) ---
+    # Más barras => más ancho; etiquetas más largas => más alto
+    fig_w = max(12.0, 0.75 * n_labels)                    # ancho dinámico
+    fig_h = 5.6 + 0.055 * min(max_len, 90) + 0.02 * min(n_labels, 80)  # alto dinámico
 
-    fig, ax1 = plt.subplots(figsize=(fig_w, fig_h))
+    fs    = 9 if n_labels > 28 else 10                    # fuente etiquetas
+    dpi   = 220                                           # resolución alta
 
-    ax1.bar(x, freqs, color=colors_b)
+    fig, ax1 = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
+    ax1.bar(x, freqs, color=colors_b, zorder=2)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels, rotation=90, ha="center", va="top", fontsize=fs)
 
-    # --- margen inferior dinámico (evita que se corte texto) ---
-    # base 0.30 + incremento por tamaño de texto y cantidad de barras
-    bottom = 0.30 + 0.0045 * min(max_len, 90) + 0.0022 * min(n_labels, 70)
-    bottom = min(bottom, 0.80)  # no exceder 80% del alto
+    # Margen inferior dinámico (para que NO se recorten las etiquetas)
+    bottom = 0.22 + 0.006 * min(max_len, 100) + 0.0025 * min(n_labels, 90)
+    bottom = max(0.28, min(bottom, 0.86))  # clamp
     fig.subplots_adjust(bottom=bottom)
 
-    ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO)
+    ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO, fontsize=16)
 
-    # Segundo eje: % acumulado
+    # % acumulado
     ax2 = ax1.twinx()
-    ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO)
+    ax2.plot(x, pct_acum, marker="o", linewidth=2, color=TEXTO, zorder=3)
     ax2.set_ylabel("% acumulado"); ax2.set_ylim(0, 110)
 
-    # Corte 80%
+    # Corte 80 %
     if (df_par["segmento_real"] == "80%").any():
         cut_idx = np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max()
         ax1.axvline(cut_idx + 0.5, linestyle=":", color="k")
     ax2.axhline(80, linestyle="--", linewidth=1, color="#666666")
 
+    # Rejilla sutil
+    ax1.grid(True, axis="y", alpha=0.25, zorder=1)
+
     buf = io.BytesIO()
-    # tight_layout con rect preserva el margen inferior ya fijado
-    fig.tight_layout(rect=[0, bottom, 1, 1])
-    fig.savefig(buf, format="PNG")
+    # Preservar nuestro margen inferior; evitar que tight_layout lo elimine
+    fig.tight_layout(rect=[0.02, bottom, 0.98, 0.98])
+    fig.savefig(buf, format="PNG", dpi=dpi)
     plt.close(fig)
     return buf.getvalue()
 
@@ -843,7 +849,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
 
     buf = io.BytesIO()
     fig.tight_layout()
-    fig.savefig(buf, format="PNG")
+    fig.savefig(buf, format="PNG", dpi=dpi)
     plt.close(fig)
     return buf.getvalue()
 
@@ -915,7 +921,7 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
 
 
 def _altura_img_según_filas(n_filas: int) -> float:
-    """Altura (cm) del gráfico Pareto en el PDF según cantidad de filas."""
+    """(Sin uso directo ahora, mantenida por compatibilidad)."""
     if n_filas >= 28:
         return 5.8
     if n_filas >= 20:
@@ -930,17 +936,17 @@ def generar_pdf_informe(nombre_informe: str,
                         desgloses: List[Dict]) -> bytes:
     """
     Genera el informe PDF completo: portada, introducción, gráfico, tabla,
-    modalidades y conclusiones.
+    modalidades y conclusiones. Inserta el gráfico de Pareto a ancho completo,
+    calculando la altura proporcional al PNG generado (misma apariencia que en la app).
     """
-    buf = io.BytesIO()
     if df_par.empty:
         st.warning("No hay datos válidos para generar el informe.")
         return b""
 
+    buf = io.BytesIO()
     doc = BaseDocTemplate(
         buf, pagesize=A4,
-        leftMargin=2 * cm, rightMargin=2 * cm,
-        topMargin=2 * cm, bottomMargin=2 * cm
+        leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm
     )
     frame_std  = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal")
     frame_last = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="last")
@@ -955,37 +961,47 @@ def generar_pdf_informe(nombre_informe: str,
 
     # ---------- PORTADA ----------
     story += [NextPageTemplate("Normal")]
-    story += [Spacer(1, 2.2 * cm)]
+    story += [Spacer(1, 2.2*cm)]
     story += [Paragraph(f"Informe de Resultados Diagrama de Pareto - {nombre_informe}", stys["CoverTitle"])]
     story += [Paragraph("Estrategia Sembremos Seguridad", stys["CoverSubtitle"])]
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
     story += [PageBreak()]
 
     # ---------- INTRODUCCIÓN ----------
-    story += [Paragraph("Introducción", stys["TitleBig"]), Spacer(1, 0.2 * cm)]
+    story += [Paragraph("Introducción", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(
         "Este informe presenta un análisis tipo <b>Pareto (80/20)</b> sobre los descriptores seleccionados. "
         "El objetivo es identificar los elementos que concentran la mayor parte de los hechos reportados para apoyar la "
         "priorización operativa y la toma de decisiones. El documento incluye el gráfico de Pareto, un cuadro "
         "resumido con frecuencia y porcentaje por descriptor, y al final una sección de conclusiones y recomendaciones.",
         stys["Body"]
-    ), Spacer(1, 0.35 * cm)]
+    ), Spacer(1, 0.35*cm)]
 
     # ---------- RESULTADOS ----------
-    story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2 * cm)]
-    story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3 * cm)]
+    story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
+    story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
+    # --- Gráfico Pareto a ancho completo con altura proporcional ---
+    from PIL import Image as PILImage  # Pillow para leer tamaño del PNG
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
-    h_img_cm = _altura_img_según_filas(len(df_par))
+
+    with io.BytesIO(pareto_png) as _b:
+        im = PILImage.open(_b)
+        w_px, h_px = im.size
+
+    # Convertir tamaño manteniendo relación de aspecto
+    width_pts = doc.width                      # ancho disponible en el PDF
+    height_pts = (h_px / w_px) * width_pts     # altura proporcional
+
     bloque_resultados = [
-        RLImage(io.BytesIO(pareto_png), width=doc.width, height=h_img_cm * cm),
-        Spacer(1, 0.25 * cm),
+        RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts),
+        Spacer(1, 0.30*cm),
         Paragraph(
             "El diagrama muestra la frecuencia por descriptor (barras en verde/azul) y el <b>porcentaje acumulado</b> (línea). "
             "La línea punteada del 80% indica el <b>punto de corte</b> para priorización.",
             stys["Small"]
         ),
-        Spacer(1, 0.25 * cm),
+        Spacer(1, 0.25*cm),
         _tabla_resultados_flowable(df_par, doc.width)
     ]
     story.append(KeepTogether(bloque_resultados))
@@ -995,24 +1011,24 @@ def generar_pdf_informe(nombre_informe: str,
         descriptor = sec.get("descriptor", "").strip()
         rows = sec.get("rows", [])
         chart_kind = sec.get("chart", "barh")
-        pares = [(r.get("Etiqueta", ""), float(r.get("%", 0) or 0)) for r in rows]
+        pares = [(r.get("Etiqueta",""), float(r.get("%", 0) or 0)) for r in rows]
 
         bloque = [
-            Spacer(1, 0.4 * cm),
+            Spacer(1, 0.4*cm),
             Paragraph(f"Modalidades de la problemática — {descriptor}", stys["TitleBig"]),
-            Spacer(1, 0.1 * cm),
+            Spacer(1, 0.1*cm),
             Paragraph(_texto_modalidades(descriptor, pares), stys["Small"]),
-            Spacer(1, 0.2 * cm),
+            Spacer(1, 0.2*cm),
             RLImage(io.BytesIO(_modalidades_png(descriptor or 'Modalidades', pares, kind=chart_kind)),
-                    width=doc.width, height=8.5 * cm),
+                    width=doc.width, height=8.5*cm),
         ]
         story.append(KeepTogether(bloque))
 
-    # ---------- CONCLUSIONES ----------
+    # ---------- CIERRE ----------
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
         Paragraph("Conclusiones y recomendaciones", stys["TitleBigCenter"]),
-        Spacer(1, 0.2 * cm),
+        Spacer(1, 0.2*cm),
     ]
 
     bullets = [
@@ -1025,7 +1041,7 @@ def generar_pdf_informe(nombre_informe: str,
         story += [Paragraph(b, stys["BulletList"], bulletText="•")]
 
     story += [
-        Spacer(1, 0.8 * cm),
+        Spacer(1, 0.8*cm),
         Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H1Center"]),
         Paragraph("Sembremos Seguridad", stys["H1Center"]),
     ]
@@ -1059,7 +1075,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                 index=0, format_func=lambda x: x[0], key=f"{key_prefix}_chart_{i}"
             )[1]
 
-            rows = [{"Etiqueta": "", "%": 0.0} for _ in range(10)]
+            rows = [{"Etiqueta":"", "%":0.0} for _ in range(10)]
             df_rows = pd.DataFrame(rows)
             de = st.data_editor(
                 df_rows, key=f"{key_prefix}_rows_{i}", use_container_width=True,
@@ -1073,12 +1089,11 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
             st.caption(f"Suma actual: {total_pct:.1f}% (recomendado ≈100%)")
 
             if dsel != "(elegir)":
-                desgloses.append({
-                    "descriptor": dsel,
-                    "rows": de.to_dict(orient="records"),
-                    "chart": chart_kind
-                })
+                desgloses.append({"descriptor": dsel,
+                                  "rows": de.to_dict(orient="records"),
+                                  "chart": chart_kind})
     return desgloses
+
 # ============================================================================
 # ============================== PARTE 9/10 =================================
 # ========================== Interfaz principal (UI) =========================
@@ -1280,6 +1295,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
