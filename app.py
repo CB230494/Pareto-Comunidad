@@ -628,40 +628,30 @@ def _page_last(canv, _doc):
 
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     """
-    Genera el PNG del diagrama de Pareto para el PDF en ALTA FIDELIDAD.
+    Genera el PNG del diagrama de Pareto para el PDF en alta fidelidad.
+    - Igual proporción visual que en la app
     - Etiquetas verticales (90°)
-    - Tamaño de figura dinámico (ancho/alto)
-    - Margen inferior proporcional a longitud de etiquetas y # de barras
-    - DPI alto para legibilidad
+    - Se guarda con bbox_inches='tight' para eliminar aire sobrante
     """
     n_labels = len(df_par)
     labels   = [str(t) for t in df_par["descriptor"].tolist()]
-    max_len  = max((len(s) for s in labels), default=10)
-
     x        = np.arange(n_labels)
     freqs    = df_par["frecuencia"].to_numpy()
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
 
-    # --- Tamaño de figura (en pulgadas) ---
-    # Más barras => más ancho; etiquetas más largas => más alto
-    fig_w = max(12.0, 0.75 * n_labels)                    # ancho dinámico
-    fig_h = 5.6 + 0.055 * min(max_len, 90) + 0.02 * min(n_labels, 80)  # alto dinámico
-
-    fs    = 9 if n_labels > 28 else 10                    # fuente etiquetas
-    dpi   = 220                                           # resolución alta
+    # === Tamaño similar al de la app ===
+    fig_w = max(12.0, 0.60 * n_labels)   # mismo factor que usamos en la app
+    fig_h = 6.6                          # misma altura base de la app
+    fs    = 9 if n_labels > 28 else 10
+    dpi   = 220
 
     fig, ax1 = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
+
     ax1.bar(x, freqs, color=colors_b, zorder=2)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels, rotation=90, ha="center", va="top", fontsize=fs)
-
-    # Margen inferior dinámico (para que NO se recorten las etiquetas)
-    bottom = 0.22 + 0.006 * min(max_len, 100) + 0.0025 * min(n_labels, 90)
-    bottom = max(0.28, min(bottom, 0.86))  # clamp
-    fig.subplots_adjust(bottom=bottom)
-
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO, fontsize=16)
 
     # % acumulado
@@ -675,13 +665,11 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
         ax1.axvline(cut_idx + 0.5, linestyle=":", color="k")
     ax2.axhline(80, linestyle="--", linewidth=1, color="#666666")
 
-    # Rejilla sutil
     ax1.grid(True, axis="y", alpha=0.25, zorder=1)
 
+    # === Guardar recortando al contenido real (sin aire extra) ===
     buf = io.BytesIO()
-    # Preservar nuestro margen inferior; evitar que tight_layout lo elimine
-    fig.tight_layout(rect=[0.02, bottom, 0.98, 0.98])
-    fig.savefig(buf, format="PNG", dpi=dpi)
+    fig.savefig(buf, format="PNG", dpi=dpi, bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
     return buf.getvalue()
 
@@ -700,7 +688,6 @@ def _tema_descriptor(descriptor: str) -> str:
     return "seguridad y convivencia"
 
 
-# --- RESUMEN: sin el texto “(ámbito: …)” ---
 def _resumen_texto(df_par: pd.DataFrame) -> str:
     if df_par.empty:
         return "Sin datos disponibles."
@@ -714,7 +701,6 @@ def _resumen_texto(df_par: pd.DataFrame) -> str:
             f"<b>{idx80}</b> descriptores, útiles para la priorización operativa.")
 
 
-# --- TEXTO DE MODALIDADES ---
 def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
     pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
     pares_orden = sorted(pares_filtrados, key=lambda x: x[1], reverse=True)
@@ -726,7 +712,6 @@ def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
             "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
 
 
-# --- Gráfico de modalidades (igual que antes) ---
 def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str = "barh") -> bytes:
     labels = [l for l, p in data_pairs if str(l).strip()]
     vals   = [float(p or 0) for l, p in data_pairs if str(l).strip()]
@@ -753,7 +738,8 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             colors=colors_seq
         )
         ax.legend(wedges, [f"{l} ({v:.1f}%)" for l, v in zip(labels, vals)],
-                  title="Modalidades", loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=9)
+                  title="Modalidades", loc="center left",
+                  bbox_to_anchor=(1.02, 0.5), fontsize=9)
         ax.set_title(title, color=TEXTO)
 
     elif kind == "lollipop":
@@ -848,10 +834,10 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.set_title(title, color=TEXTO)
 
     buf = io.BytesIO()
-    fig.tight_layout()
-    fig.savefig(buf, format="PNG", dpi=dpi)
+    fig.savefig(buf, format="PNG", dpi=dpi, bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
     return buf.getvalue()
+
 
 
 # ============================================================================
@@ -981,17 +967,15 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
-    # --- Gráfico Pareto a ancho completo con altura proporcional ---
-    from PIL import Image as PILImage  # Pillow para leer tamaño del PNG
+    # --- Gráfico Pareto a ancho completo con altura proporcional (PNG recortado tight) ---
+    from PIL import Image as PILImage
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
-
     with io.BytesIO(pareto_png) as _b:
         im = PILImage.open(_b)
         w_px, h_px = im.size
 
-    # Convertir tamaño manteniendo relación de aspecto
-    width_pts = doc.width                      # ancho disponible en el PDF
-    height_pts = (h_px / w_px) * width_pts     # altura proporcional
+    width_pts = doc.width
+    height_pts = (h_px / w_px) * width_pts
 
     bloque_resultados = [
         RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts),
@@ -1005,6 +989,7 @@ def generar_pdf_informe(nombre_informe: str,
         _tabla_resultados_flowable(df_par, doc.width)
     ]
     story.append(KeepTogether(bloque_resultados))
+
 
     # ---------- MODALIDADES ----------
     for sec in desgloses:
@@ -1295,6 +1280,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
