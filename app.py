@@ -557,6 +557,8 @@ def sheets_eliminar_pareto(nombre: str) -> bool:
 st.session_state.setdefault("freq_map", {})
 st.session_state.setdefault("portafolio", {})
 st.session_state.setdefault("msel", [])
+st.session_state.setdefault("editor_df", pd.DataFrame(columns=["descriptor", "frecuencia"]))
+st.session_state.setdefault("last_msel", [])
 st.session_state.setdefault("reset_after_save", False)
 
 # NUEVO: si cambió la URL del Sheet, vaciar portafolio para no arrastrar datos viejos
@@ -575,6 +577,8 @@ if not st.session_state["portafolio"]:
 if st.session_state.get("reset_after_save", False):
     st.session_state["freq_map"] = {}
     st.session_state["msel"] = []
+    st.session_state["editor_df"] = pd.DataFrame(columns=["descriptor", "frecuencia"])
+    st.session_state["last_msel"] = []
     st.session_state.pop("editor_freq", None)
     st.session_state["reset_after_save"] = False
 
@@ -1138,25 +1142,33 @@ with tab_editor:
     st.subheader("✏️ Editor de Pareto individual")
 
     nombre_pareto = st.text_input("Nombre del Pareto", "").strip()
-    freq_map = st.session_state["freq_map"]
 
-    # Selector múltiple
+    # Selector múltiple (CATÁLOGO EMBEBIDO) — ahora con key fijo
     opts = [c["descriptor"] for c in CATALOGO]
     msel = st.multiselect(
         "Selecciona los descriptores a incluir",
         options=opts,
-        default=st.session_state["msel"]
+        key="msel"  # ✅ deja que el widget maneje su estado, sin default manual
     )
-    st.session_state["msel"] = msel
 
-    # Tabla editable
+    # Si hay selección, preparamos/actualizamos el DF del editor
     if msel:
-        df_edit = pd.DataFrame({
-            "descriptor": msel,
-            "frecuencia": [freq_map.get(m, 0) for m in msel]
-        })
+        # Si la selección de descriptores cambió, reconstruimos el DF
+        if msel != st.session_state.get("last_msel", []):
+            data = []
+            # Usamos los valores actuales de freq_map para no perder frecuencias ya digitadas
+            freq_map_actual = st.session_state.get("freq_map", {})
+            for d in msel:
+                data.append({
+                    "descriptor": d,
+                    "frecuencia": freq_map_actual.get(d, 0)
+                })
+            st.session_state["editor_df"] = pd.DataFrame(data)
+            st.session_state["last_msel"] = list(msel)
+
+        # Editor de frecuencias (se alimenta desde session_state["editor_df"])
         df_edit = st.data_editor(
-            df_edit,
+            st.session_state["editor_df"],
             num_rows="dynamic",
             use_container_width=True,
             key="editor_freq",
@@ -1165,9 +1177,13 @@ with tab_editor:
                 "frecuencia": st.column_config.NumberColumn("Frecuencia", min_value=0, step=1)
             }
         )
+
+        # Actualizar el DF y el freq_map en sesión con lo que el usuario acaba de escribir
+        st.session_state["editor_df"] = df_edit
         freq_map = dict(zip(df_edit["descriptor"], df_edit["frecuencia"]))
         st.session_state["freq_map"] = freq_map
 
+        # Cálculo y vista previa del Pareto
         df_par = calcular_pareto(df_desde_freq_map(freq_map))
         st.divider()
         st.subheader("📊 Diagrama de Pareto (Vista previa)")
@@ -1190,7 +1206,7 @@ with tab_editor:
                     sheets_guardar_pareto(nombre_pareto, freq_map, sobrescribir=True)
                     st.success(f"Pareto '{nombre_pareto}' guardado correctamente.")
                     st.session_state["reset_after_save"] = True
-                    st.rerun()  # ✅ reemplazo de experimental_rerun
+                    st.rerun()  # ✅ mantiene el comportamiento
                 else:
                     st.warning("Asigna un nombre al Pareto antes de guardar.")
         with col2:
@@ -1206,6 +1222,13 @@ with tab_editor:
                             file_name=f"Informe_{nombre_pareto}.pdf",
                             mime="application/pdf"
                         )
+
+    else:
+        # Si no hay descriptores seleccionados, limpiamos estructuras del editor
+        st.session_state["freq_map"] = {}
+        st.session_state["editor_df"] = pd.DataFrame(columns=["descriptor", "frecuencia"])
+        st.session_state["last_msel"] = []
+        st.info("Selecciona al menos un descriptor del catálogo para comenzar.")
 
 # ---------------------------------------------------------------------------
 # TAB 2 — Portafolio de Paretos
@@ -1319,6 +1342,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
