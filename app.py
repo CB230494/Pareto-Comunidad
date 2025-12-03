@@ -1240,6 +1240,40 @@ with tab_portafolio:
     if not port:
         st.info("No hay Paretos guardados todavía.")
     else:
+        # ---------------- PARETO GENERAL DESDE SELECCIÓN DEL PORTAFOLIO ----------------
+        st.markdown("### 📊 Pareto combinado a partir de Paretos del portafolio")
+
+        nombres_port = list(port.keys())
+        seleccion_port = st.multiselect(
+            "Selecciona los Paretos del portafolio que quieres combinar en un Pareto general",
+            options=nombres_port,
+            default=[],
+            key="portafolio_combinado"
+        )
+
+        if seleccion_port:
+            # Tomar los mapas de frecuencia de los seleccionados
+            mapas_sel = [port[n] for n in seleccion_port]
+            mapa_total = combinar_maps(mapas_sel)
+
+            df_combo = calcular_pareto(df_desde_freq_map(mapa_total))
+
+            st.subheader("📊 Pareto general (combinado)")
+            dibujar_pareto(df_combo, f"Pareto combinado – {', '.join(seleccion_port)}")
+            st.caption(f"Total de respuestas tratadas en el Pareto combinado: {int(df_combo['frecuencia'].sum())}")
+
+            st.download_button(
+                "📥 Exportar Excel del Pareto combinado",
+                exportar_excel_con_grafico(df_combo, "Pareto combinado"),
+                file_name="Pareto_combinado_portafolio.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_pareto_combinado"
+            )
+
+        st.divider()
+        st.markdown("### 📁 Detalle de cada Pareto almacenado")
+
+        # ---------------- LISTADO INDIVIDUAL (como ya lo tenías) ----------------
         for nombre, mapa in list(port.items()):
             with st.expander(f"{nombre}", expanded=False):
                 dfp = calcular_pareto(df_desde_freq_map(mapa))
@@ -1264,7 +1298,7 @@ with tab_portafolio:
                             st.success(f"El Pareto '{nombre}' fue eliminado del sistema y de Google Sheets.")
                         else:
                             st.warning(f"El Pareto '{nombre}' se eliminó localmente, pero no pudo borrarse en Sheets.")
-                        st.rerun()  # ✅ reemplazo de experimental_rerun
+                        st.rerun()
                 with colC:
                     try:
                         pop = st.popover("📄 Informe PDF de este Pareto")
@@ -1342,6 +1376,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
