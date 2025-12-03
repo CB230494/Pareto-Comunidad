@@ -1204,6 +1204,75 @@ def generar_pdf_informe(nombre_informe: str,
     return buf.getvalue()
 
 
+# =========================================================
+# =========== UI formulario de desgloses ==================
+# =========================================================
+
+def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
+    """
+    UI reutilizable para agregar secciones de 'Modalidades' en informes PDF.
+    Se usa tanto en el editor individual como en el portafolio.
+    """
+    st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
+    max_secs = max(0, len(descriptor_list))
+    default_val = 1 if max_secs > 0 else 0
+    n_secs = st.number_input(
+        "Cantidad de secciones de Modalidades",
+        min_value=0,
+        max_value=max_secs,
+        value=default_val,
+        step=1,
+        key=f"{key_prefix}_nsecs"
+    )
+    desgloses: List[Dict] = []
+    for i in range(n_secs):
+        with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
+            dsel = st.selectbox(
+                f"Descriptor para la sección #{i+1}",
+                options=["(elegir)"] + descriptor_list,
+                index=0,
+                key=f"{key_prefix}_desc_{i}"
+            )
+
+            chart_kind = st.selectbox(
+                "Tipo de gráfico",
+                options=[("Barras horizontales", "barh"),
+                         ("Barras verticales", "bar"),
+                         ("Lollipop (palo+punto)", "lollipop"),
+                         ("Dona / Pie", "donut"),
+                         ("Barra 100% (composición)", "comp100"),
+                         ("Píldora (progreso redondeado)", "pill")],
+                index=0,
+                format_func=lambda x: x[0],
+                key=f"{key_prefix}_chart_{i}"
+            )[1]
+
+            rows = [{"Etiqueta": "", "%": 0.0} for _ in range(10)]
+            df_rows = pd.DataFrame(rows)
+            de = st.data_editor(
+                df_rows,
+                key=f"{key_prefix}_rows_{i}",
+                use_container_width=True,
+                column_config={
+                    "Etiqueta": st.column_config.TextColumn("Etiqueta / Modalidad", width="large"),
+                    "%": st.column_config.NumberColumn("Porcentaje", min_value=0.0, max_value=100.0, step=0.1),
+                },
+                num_rows="fixed",
+            )
+            total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
+            st.caption(f"Suma actual: {total_pct:.1f}% (recomendado ≈100%)")
+
+            if dsel != "(elegir)":
+                desgloses.append({
+                    "descriptor": dsel,
+                    "rows": de.to_dict(orient="records"),
+                    "chart": chart_kind
+                })
+
+    return desgloses
+
+
+
 # ============================================================================
 # ============================== PARTE 9/10 =================================
 # ========================== Interfaz principal (UI) =========================
@@ -1499,6 +1568,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
