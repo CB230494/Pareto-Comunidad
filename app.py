@@ -1241,14 +1241,14 @@ with tab_portafolio:
         st.info("No hay Paretos guardados todavía.")
     else:
         # ---------------- PARETO GENERAL DESDE SELECCIÓN DEL PORTAFOLIO ----------------
-        st.markdown("### 📊 Pareto combinado a partir de Paretos del portafolio")
+        st.markdown("### 📊 Pareto general a partir de Paretos del portafolio")
 
         nombres_port = list(port.keys())
         seleccion_port = st.multiselect(
             "Selecciona los Paretos del portafolio que quieres combinar en un Pareto general",
             options=nombres_port,
             default=[],
-            key="portafolio_combinado"
+            key="portafolio_general"
         )
 
         if seleccion_port:
@@ -1258,16 +1258,16 @@ with tab_portafolio:
 
             df_combo = calcular_pareto(df_desde_freq_map(mapa_total))
 
-            st.subheader("📊 Pareto general (combinado)")
-            dibujar_pareto(df_combo, f"Pareto combinado – {', '.join(seleccion_port)}")
-            st.caption(f"Total de respuestas tratadas en el Pareto combinado: {int(df_combo['frecuencia'].sum())}")
+            st.subheader("📊 Pareto general (general)")
+            dibujar_pareto(df_combo, f"Pareto general – {', '.join(seleccion_port)}")
+            st.caption(f"Total de respuestas tratadas en el Pareto general: {int(df_combo['frecuencia'].sum())}")
 
             st.download_button(
-                "📥 Exportar Excel del Pareto combinado",
-                exportar_excel_con_grafico(df_combo, "Pareto combinado"),
+                "📥 Exportar Excel del Pareto general",
+                exportar_excel_con_grafico(df_combo, "Pareto general"),
                 file_name="Pareto_combinado_portafolio.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="dl_pareto_combinado"
+                key="dl_pareto_general"
             )
 
         st.divider()
@@ -1376,6 +1376,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
