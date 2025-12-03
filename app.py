@@ -1026,24 +1026,71 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     return t
 
 
-def _altura_img_según_filas(n_filas: int) -> float:
-    """(Sin uso directo ahora, mantenida por compatibilidad)."""
-    if n_filas >= 28:
-        return 5.8
-    if n_filas >= 20:
-        return 6.8
-    if n_filas >= 14:
-        return 7.6
-    return 8.6
+# =========================================================
+# =========== PDF SENCILLO (Pareto general) ================
+# =========================================================
 
+def generar_pdf_pareto_simple(nombre_informe: str, df_par: pd.DataFrame) -> bytes:
+    """
+    Genera un PDF sencillo con:
+    - Título
+    - Gráfico de Pareto (más grande y claro)
+    - Tabla de datos
+    """
+    if df_par.empty:
+        st.warning("No hay datos válidos para generar el PDF del Pareto.")
+        return b""
+
+    buf = io.BytesIO()
+    doc = BaseDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm
+    )
+    frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal")
+    doc.addPageTemplates(PageTemplate(id="normal", frames=[frame], onPage=_page_normal))
+
+    stys = _styles()
+    story: List = []
+
+    # ---------- TÍTULO ----------
+    story.append(Paragraph(f"Diagrama de Pareto – {nombre_informe}", stys["TitleBigCenter"]))
+    story.append(Spacer(1, 0.4*cm))
+
+    # ---------- GRÁFICO (PNG optimizado para PDF) ----------
+    from PIL import Image as PILImage
+    pareto_png = _pareto_png(df_par, f"Pareto – {nombre_informe}")
+    with io.BytesIO(pareto_png) as _b:
+        im = PILImage.open(_b)
+        w_px, h_px = im.size
+
+    width_pts = doc.width
+
+    # Altura según proporción de la imagen
+    proportional_height = (h_px / w_px) * width_pts
+
+    # 🚀 Altura mínima para que el gráfico NO se vea pequeño
+    height_pts = max(proportional_height, 7 * cm)
+
+    story.append(RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts))
+    story.append(Spacer(1, 0.6*cm))
+
+    # ---------- TABLA ----------
+    story.append(_tabla_resultados_flowable(df_par, doc.width))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+# =========================================================
+# =========== INFORME COMPLETO (ya lo tenías) ==============
+# =========================================================
 
 def generar_pdf_informe(nombre_informe: str,
                         df_par: pd.DataFrame,
                         desgloses: List[Dict]) -> bytes:
     """
     Genera el informe PDF completo: portada, introducción, gráfico, tabla,
-    modalidades y conclusiones. Inserta el gráfico de Pareto a ancho completo,
-    calculando la altura proporcional al PNG generado (misma apariencia que en la app).
+    modalidades y conclusiones.
     """
     if df_par.empty:
         st.warning("No hay datos válidos para generar el informe.")
@@ -1065,7 +1112,7 @@ def generar_pdf_informe(nombre_informe: str,
     stys = _styles()
     story: List = []
 
-    # ---------- PORTADA ----------
+    # ----------------- PORTADA -----------------
     story += [NextPageTemplate("Normal")]
     story += [Spacer(1, 2.2*cm)]
     story += [Paragraph(f"Informe de Resultados Diagrama de Pareto - {nombre_informe}", stys["CoverTitle"])]
@@ -1073,21 +1120,20 @@ def generar_pdf_informe(nombre_informe: str,
     story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
     story += [PageBreak()]
 
-    # ---------- INTRODUCCIÓN ----------
+    # ----------------- INTRODUCCIÓN -----------------
     story += [Paragraph("Introducción", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(
         "Este informe presenta un análisis tipo <b>Pareto (80/20)</b> sobre los descriptores seleccionados. "
         "El objetivo es identificar los elementos que concentran la mayor parte de los hechos reportados para apoyar la "
-        "priorización operativa y la toma de decisiones. El documento incluye el gráfico de Pareto, un cuadro "
-        "resumido con frecuencia y porcentaje por descriptor, y al final una sección de conclusiones y recomendaciones.",
+        "priorización operativa y la toma de decisiones.",
         stys["Body"]
     ), Spacer(1, 0.35*cm)]
 
-    # ---------- RESULTADOS ----------
+    # ----------------- RESULTADOS -----------------
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2*cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.3*cm)]
 
-    # --- Gráfico Pareto a ancho completo con altura proporcional ---
+    # --- Gráfico Pareto ---
     from PIL import Image as PILImage
     pareto_png = _pareto_png(df_par, "Diagrama de Pareto")
     with io.BytesIO(pareto_png) as _b:
@@ -1097,28 +1143,24 @@ def generar_pdf_informe(nombre_informe: str,
     width_pts  = doc.width
     height_pts = (h_px / w_px) * width_pts
 
-    # 1) Gráfico + descripción siempre juntos
     story.append(KeepTogether([
         RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts),
         Spacer(1, 0.30*cm),
         Paragraph(
-            "El diagrama muestra la frecuencia por descriptor (barras en verde/azul) y el <b>porcentaje acumulado</b> (línea). "
-            "La línea punteada del 80% indica el <b>punto de corte</b> para priorización.",
+            "El diagrama muestra la frecuencia por descriptor (barras) y el <b>% acumulado</b> (línea).",
             stys["Small"]
         ),
     ]))
 
-    # 2) Salto de página si el gráfico es largo
     if len(df_par) >= 12:
         story.append(PageBreak())
 
-    # 3) Tabla siempre en bloque único (no se corta)
     story.append(KeepTogether([
         Spacer(1, 0.25*cm),
         _tabla_resultados_flowable(df_par, doc.width),
     ]))
 
-    # ---------- MODALIDADES ----------
+    # ----------------- MODALIDADES -----------------
     for sec in desgloses:
         descriptor = sec.get("descriptor", "").strip()
         rows = sec.get("rows", [])
@@ -1127,7 +1169,7 @@ def generar_pdf_informe(nombre_informe: str,
 
         bloque = [
             Spacer(1, 0.4*cm),
-            Paragraph(f"Modalidades de la problemática — {descriptor}", stys["TitleBig"]),
+            Paragraph(f"Modalidades — {descriptor}", stys["TitleBig"]),
             Spacer(1, 0.1*cm),
             Paragraph(_texto_modalidades(descriptor, pares), stys["Small"]),
             Spacer(1, 0.2*cm),
@@ -1136,7 +1178,7 @@ def generar_pdf_informe(nombre_informe: str,
         ]
         story.append(KeepTogether(bloque))
 
-    # ---------- CIERRE ----------
+    # ----------------- CIERRE -----------------
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
         Paragraph("Conclusiones y recomendaciones", stys["TitleBigCenter"]),
@@ -1146,8 +1188,8 @@ def generar_pdf_informe(nombre_informe: str,
     bullets = [
         "Priorizar intervenciones sobre los descriptores que conforman el <b>80% acumulado</b>.",
         "Coordinar acciones interinstitucionales enfocadas en las <b>modalidades</b> con mayor porcentaje.",
-        "Fortalecer la participación comunitaria y el control territorial en puntos críticos.",
-        "Monitorear indicadores mensualmente para evaluar la efectividad de las acciones.",
+        "Fortalecer la participación comunitaria con presencia territorial.",
+        "Monitorear y actualizar los indicadores periódicamente.",
     ]
     for b in bullets:
         story += [Paragraph(b, stys["BulletList"], bulletText="•")]
@@ -1161,96 +1203,6 @@ def generar_pdf_informe(nombre_informe: str,
     doc.build(story)
     return buf.getvalue()
 
-
-def generar_pdf_pareto_simple(nombre_informe: str, df_par: pd.DataFrame) -> bytes:
-    """
-    Genera un PDF sencillo con:
-    - Título
-    - Gráfico de Pareto
-    - Tabla de datos (Descriptor, Frecuencia, % y total)
-    """
-    if df_par.empty:
-        st.warning("No hay datos válidos para generar el PDF del Pareto.")
-        return b""
-
-    buf = io.BytesIO()
-    doc = BaseDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm
-    )
-    frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal")
-    doc.addPageTemplates(PageTemplate(id="normal", frames=[frame], onPage=_page_normal))
-
-    stys = _styles()
-    story: List = []
-
-    # Título
-    story.append(Paragraph(f"Diagrama de Pareto – {nombre_informe}", stys["TitleBigCenter"]))
-    story.append(Spacer(1, 0.3*cm))
-
-    # Gráfico (usamos el PNG con etiquetas diagonales)
-    from PIL import Image as PILImage
-    pareto_png = _pareto_png(df_par, f"Pareto – {nombre_informe}")
-    with io.BytesIO(pareto_png) as _b:
-        im = PILImage.open(_b)
-        w_px, h_px = im.size
-
-    width_pts  = doc.width
-    height_pts = (h_px / w_px) * width_pts
-
-    story.append(RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts))
-    story.append(Spacer(1, 0.4*cm))
-
-    # Tabla de resultados
-    story.append(_tabla_resultados_flowable(df_par, doc.width))
-
-    doc.build(story)
-    return buf.getvalue()
-
-
-# === UI formulario de desgloses (para editor y unificado) ===
-def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
-    st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
-    max_secs = max(0, len(descriptor_list))
-    default_val = 1 if max_secs > 0 else 0
-    n_secs = st.number_input("Cantidad de secciones de Modalidades",
-                             min_value=0, max_value=max_secs, value=default_val, step=1,
-                             key=f"{key_prefix}_nsecs")
-    desgloses: List[Dict] = []
-    for i in range(n_secs):
-        with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
-            dsel = st.selectbox(f"Descriptor para la sección #{i+1}",
-                                options=["(elegir)"] + descriptor_list, index=0, key=f"{key_prefix}_desc_{i}")
-
-            chart_kind = st.selectbox(
-                "Tipo de gráfico",
-                options=[("Barras horizontales", "barh"),
-                         ("Barras verticales", "bar"),
-                         ("Lollipop (palo+punto)", "lollipop"),
-                         ("Dona / Pie", "donut"),
-                         ("Barra 100% (composición)", "comp100"),
-                         ("Píldora (progreso redondeado)", "pill")],
-                index=0, format_func=lambda x: x[0], key=f"{key_prefix}_chart_{i}"
-            )[1]
-
-            rows = [{"Etiqueta":"", "%":0.0} for _ in range(10)]
-            df_rows = pd.DataFrame(rows)
-            de = st.data_editor(
-                df_rows, key=f"{key_prefix}_rows_{i}", use_container_width=True,
-                column_config={
-                    "Etiqueta": st.column_config.TextColumn("Etiqueta / Modalidad", width="large"),
-                    "%": st.column_config.NumberColumn("Porcentaje", min_value=0.0, max_value=100.0, step=0.1)
-                },
-                num_rows="fixed"
-            )
-            total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
-            st.caption(f"Suma actual: {total_pct:.1f}% (recomendado ≈100%)")
-
-            if dsel != "(elegir)":
-                desgloses.append({"descriptor": dsel,
-                                  "rows": de.to_dict(orient="records"),
-                                  "chart": chart_kind})
-    return desgloses
 
 # ============================================================================
 # ============================== PARTE 9/10 =================================
@@ -1390,10 +1342,14 @@ with tab_portafolio:
 
             st.subheader("📊 Pareto general (combinado)")
             dibujar_pareto(df_combo, f"Pareto general – {', '.join(seleccion_port)}")
-            st.caption(f"Total de respuestas tratadas en el Pareto general: {int(df_combo['frecuencia'].sum())}")
+            st.caption(
+                f"Total de respuestas tratadas en el Pareto general: "
+                f"{int(df_combo['frecuencia'].sum())}"
+            )
 
             col_excel, col_pdf = st.columns(2)
 
+            # --- Excel del Pareto general ---
             with col_excel:
                 st.download_button(
                     "📥 Exportar Excel del Pareto general",
@@ -1403,29 +1359,32 @@ with tab_portafolio:
                     key="dl_pareto_general"
                 )
 
+            # --- PDF simple del Pareto general (gráfico grande + tabla) ---
             with col_pdf:
                 pdf_simple = generar_pdf_pareto_simple("Pareto general portafolio", df_combo)
                 if pdf_simple:
                     st.download_button(
-                        "📄 Descargar PDF del Pareto general",
+                        "📥 Descargar PDF del Pareto general (simple)",
                         data=pdf_simple,
                         file_name="Pareto_general_portafolio.pdf",
                         mime="application/pdf",
-                        key="dl_pareto_general_pdf"
+                        key="pdf_pareto_general"
                     )
 
         st.divider()
         st.markdown("### 📁 Detalle de cada Pareto almacenado")
 
-        # ---------------- LISTADO INDIVIDUAL (como ya lo tenías) ----------------
+        # ---------------- LISTADO INDIVIDUAL ----------------
         for nombre, mapa in list(port.items()):
             with st.expander(f"{nombre}", expanded=False):
                 dfp = calcular_pareto(df_desde_freq_map(mapa))
                 dibujar_pareto(dfp, nombre)
                 st.caption(f"Total de respuestas tratadas: {int(dfp['frecuencia'].sum())}")
 
-                # Acciones
-                colA, colB, colC = st.columns([1,1,2])
+                # Acciones por Pareto individual
+                colA, colB, colC = st.columns([1, 1, 2])
+
+                # Excel individual
                 with colA:
                     st.download_button(
                         "📥 Excel con gráfico",
@@ -1434,25 +1393,44 @@ with tab_portafolio:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key=f"dl_{nombre}"
                     )
+
+                # Eliminar del portafolio + Sheets
                 with colB:
                     if st.button(f"🗑️ Eliminar '{nombre}'", key=f"del_{nombre}"):
                         del st.session_state["portafolio"][nombre]
                         ok = sheets_eliminar_pareto(nombre)
                         if ok:
-                            st.success(f"El Pareto '{nombre}' fue eliminado del sistema y de Google Sheets.")
+                            st.success(
+                                f"El Pareto '{nombre}' fue eliminado del sistema y de Google Sheets."
+                            )
                         else:
-                            st.warning(f"El Pareto '{nombre}' se eliminó localmente, pero no pudo borrarse en Sheets.")
+                            st.warning(
+                                f"El Pareto '{nombre}' se eliminó localmente, "
+                                f"pero no pudo borrarse en Sheets."
+                            )
                         st.rerun()
+
+                # Informe PDF completo individual (el que ya tenías)
                 with colC:
                     try:
                         pop = st.popover("📄 Informe PDF de este Pareto")
                     except Exception:
                         pop = st.expander("📄 Informe PDF de este Pareto", expanded=False)
+
                     with pop:
-                        nombre_inf_ind = st.text_input("Nombre del informe", value=f"{nombre}", key=f"inf_nom_{nombre}")
-                        desgloses_ind = ui_desgloses(dfp["descriptor"].tolist(), key_prefix=f"inf_{nombre}")
+                        nombre_inf_ind = st.text_input(
+                            "Nombre del informe",
+                            value=f"{nombre}",
+                            key=f"inf_nom_{nombre}"
+                        )
+                        desgloses_ind = ui_desgloses(
+                            dfp["descriptor"].tolist(),
+                            key_prefix=f"inf_{nombre}"
+                        )
                         if st.button("Generar PDF", key=f"btn_inf_{nombre}"):
-                            pdf_bytes = generar_pdf_informe(nombre_inf_ind, dfp, desgloses_ind)
+                            pdf_bytes = generar_pdf_informe(
+                                nombre_inf_ind, dfp, desgloses_ind
+                            )
                             if pdf_bytes:
                                 st.download_button(
                                     "⬇️ Descargar PDF",
@@ -1521,6 +1499,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
