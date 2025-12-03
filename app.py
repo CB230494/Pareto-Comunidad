@@ -645,7 +645,7 @@ def _page_last(canv, _doc):
 # ============================================================================
 
 def _wrap_for_two_lines(labels: List[str]) -> List[str]:
-    """Envuelve etiquetas en máximo 2 líneas."""
+    """Envuelve etiquetas en máximo 2 líneas (para la vista en la app, no PDF)."""
     if not labels:
         return labels
     max_len = max(len(str(x)) for x in labels)
@@ -669,29 +669,45 @@ def _wrap_for_two_lines(labels: List[str]) -> List[str]:
 def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     """
     PNG del Pareto para PDF:
-    - Etiquetas en diagonal (45°) y hasta 2 líneas
+    - Etiquetas en una sola línea, rotadas (45°–90° según cantidad)
+    - Se aumenta el ancho de la figura para reducir cruce visual
     - bbox_inches='tight' para eliminar aire
     """
     n_labels = len(df_par)
-    labels   = [str(t) for t in df_par["descriptor"].tolist()]
-    labels_w = _wrap_for_two_lines(labels)
+    labels   = [str(t) for t in df_par["descriptor"].tolist()]  # 👈 SIN saltos de línea
 
     x        = np.arange(n_labels)
     freqs    = df_par["frecuencia"].to_numpy()
     pct_acum = df_par["pct_acum"].to_numpy()
     colors_b = _colors_for_segments(df_par["segmento_real"].tolist())
 
-    fig_w = max(12.0, 0.60 * n_labels)
+    # Más ancho por cantidad de etiquetas
+    fig_w = max(14.0, 0.80 * n_labels)
     fig_h = 6.6
-    fs    = 9 if n_labels > 28 else 10
+
+    # Tamaño de fuente dinámico
+    if n_labels > 40:
+        fs = 7
+    elif n_labels > 28:
+        fs = 8
+    else:
+        fs = 9
+
+    # Ángulo dinámico: mientras más etiquetas, más vertical
+    if n_labels > 40:
+        rot = 90
+    elif n_labels > 25:
+        rot = 70
+    else:
+        rot = 45
+
     dpi   = 220
 
     fig, ax1 = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi)
     ax1.bar(x, freqs, color=colors_b, zorder=2)
     ax1.set_ylabel("Frecuencia")
     ax1.set_xticks(x)
-    # Etiquetas en diagonal para que no se encimen
-    ax1.set_xticklabels(labels_w, rotation=45, ha="right", va="top", fontsize=fs)
+    ax1.set_xticklabels(labels, rotation=rot, ha="right", va="top", fontsize=fs)
     ax1.set_title(titulo if titulo.strip() else "Diagrama de Pareto", color=TEXTO, fontsize=16)
 
     ax2 = ax1.twinx()
@@ -705,8 +721,8 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str) -> bytes:
     ax2.axhline(80, linestyle="--", linewidth=1, color="#666666")
     ax1.grid(True, axis="y", alpha=0.25, zorder=1)
 
-    # Más espacio inferior por etiquetas diagonales
-    fig.subplots_adjust(bottom=0.30)
+    # Más espacio inferior para etiquetas largas rotadas
+    fig.subplots_adjust(bottom=0.35)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="PNG", dpi=dpi, bbox_inches="tight", pad_inches=0.08)
@@ -734,22 +750,30 @@ def _resumen_texto(df_par: pd.DataFrame) -> str:
     total = int(df_par["frecuencia"].sum())
     n = len(df_par)
     top = df_par.iloc[0]
-    idx80 = int(np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max() + 1) if (df_par["segmento_real"]=="80%").any() else 0
-    return (f"Se registran <b>{total}</b> hechos distribuidos en <b>{n}</b> descriptores. "
-            f"El descriptor de mayor incidencia es <b>{top['descriptor']}</b>, con <b>{int(top['frecuencia'])}</b> casos "
-            f"({float(top['porcentaje']):.2f}%). El punto de corte del <b>80%</b> se alcanza con "
-            f"<b>{idx80}</b> descriptores, útiles para la priorización operativa.")
+    idx80 = int(
+        np.where(df_par["segmento_real"].to_numpy() == "80%")[0].max() + 1
+    ) if (df_par["segmento_real"] == "80%").any() else 0
+    return (
+        f"Se registran <b>{total}</b> hechos distribuidos en <b>{n}</b> descriptores. "
+        f"El descriptor de mayor incidencia es <b>{top['descriptor']}</b>, con <b>{int(top['frecuencia'])}</b> casos "
+        f"({float(top['porcentaje']):.2f}%). El punto de corte del <b>80%</b> se alcanza con "
+        f"<b>{idx80}</b> descriptores, útiles para la priorización operativa."
+    )
 
 
 def _texto_modalidades(descriptor: str, pares: List[Tuple[str, float]]) -> str:
     pares_filtrados = [(l, p) for l, p in pares if str(l).strip() and (p or 0) > 0]
     pares_orden = sorted(pares_filtrados, key=lambda x: x[1], reverse=True)
     if not pares_orden:
-        return (f"Para <b>{descriptor}</b> no se reportaron modalidades con porcentaje. "
-                "Se sugiere recolectar esta información para focalizar acciones.")
+        return (
+            f"Para <b>{descriptor}</b> no se reportaron modalidades con porcentaje. "
+            "Se sugiere recolectar esta información para focalizar acciones."
+        )
     top_txt = "; ".join([f"<b>{l}</b> ({p:.1f}%)" for l, p in pares_orden[:2]])
-    return (f"En <b>{descriptor}</b> destacan: {top_txt}. "
-            "Esto orienta intervenciones específicas sobre las variantes de mayor peso.")
+    return (
+        f"En <b>{descriptor}</b> destacan: {top_txt}. "
+        "Esto orienta intervenciones específicas sobre las variantes de mayor peso."
+    )
 
 
 def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str = "barh") -> bytes:
@@ -767,20 +791,28 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
     from matplotlib.patches import FancyBboxPatch, Circle
 
     cmap = mpl.cm.get_cmap("Blues")
-    colors_seq = [cmap(0.35 + 0.5*(i/max(1, n-1))) for i in range(n)]
+    colors_seq = [cmap(0.35 + 0.5 * (i / max(1, n - 1))) for i in range(n)]
     dpi = 220
 
     if kind == "donut":
         fig, ax = plt.subplots(figsize=(7.8, 5.4), dpi=dpi)
         wedges, _, _ = ax.pie(
-            vals, labels=None, autopct=lambda p: f"{p:.1f}%",
-            startangle=90, pctdistance=0.8,
+            vals,
+            labels=None,
+            autopct=lambda p: f"{p:.1f}%",
+            startangle=90,
+            pctdistance=0.8,
             wedgeprops=dict(width=0.4, edgecolor="white"),
-            colors=colors_seq
+            colors=colors_seq,
         )
-        ax.legend(wedges, [f"{l} ({v:.1f}%)" for l, v in zip(labels, vals)],
-                  title="Modalidades", loc="center left",
-                  bbox_to_anchor=(1.02, 0.5), fontsize=9)
+        ax.legend(
+            wedges,
+            [f"{l} ({v:.1f}%)" for l, v in zip(labels, vals)],
+            title="Modalidades",
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            fontsize=9,
+        )
         ax.set_title(title, color=TEXTO)
 
     elif kind == "lollipop":
@@ -792,7 +824,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.set_yticklabels(_wrap_labels(labels, 35))
         ax.invert_yaxis()
         ax.set_xlabel("Porcentaje")
-        ax.set_xlim(0, max(100, max(vals)*1.05))
+        ax.set_xlim(0, max(100, max(vals) * 1.05))
         for i, v in enumerate(vals):
             ax.text(v + 1, i, f"{v:.1f}%", va="center", fontsize=10)
         ax.set_title(title, color=TEXTO)
@@ -804,9 +836,9 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.set_xticks(x)
         ax.set_xticklabels(_wrap_labels(labels, 20), rotation=0)
         ax.set_ylabel("Porcentaje")
-        ax.set_ylim(0, max(100, max(vals)*1.15))
+        ax.set_ylim(0, max(100, max(vals) * 1.15))
         for i, v in enumerate(vals):
-            ax.text(i, v + max(vals)*0.03, f"{v:.1f}%", ha="center", fontsize=10)
+            ax.text(i, v + max(vals) * 0.03, f"{v:.1f}%", ha="center", fontsize=10)
         ax.set_title(title, color=TEXTO)
 
     elif kind == "comp100":
@@ -816,7 +848,15 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
             w = max(0.0, float(v))
             ax.barh(0, w, left=left, color=colors_seq[i])
             if w >= 7:
-                ax.text(left + w/2, 0, f"{lab}\n{v:.1f}%", va="center", ha="center", fontsize=9, color="white")
+                ax.text(
+                    left + w / 2,
+                    0,
+                    f"{lab}\n{v:.1f}%",
+                    va="center",
+                    ha="center",
+                    fontsize=9,
+                    color="white",
+                )
             left += w
         ax.set_xlim(0, max(100, sum(vals)))
         ax.set_yticks([])
@@ -825,45 +865,78 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.grid(False)
 
     elif kind == "pill":
-        fig_height = 0.9 + n*0.85
+        fig_height = 0.9 + n * 0.85
         fig, ax = plt.subplots(figsize=(10.8, fig_height), dpi=dpi)
         ax.set_xlim(0, 100)
         ax.set_ylim(0, n)
         ax.axis("off")
         track_h = 0.72
-        round_r = track_h/2
+        round_r = track_h / 2
 
         for i, (lab, v) in enumerate(zip(labels, vals)):
-            y = n - 1 - i + (1 - track_h)/2
+            y = n - 1 - i + (1 - track_h) / 2
             track = FancyBboxPatch(
-                (0.8, y), 98.4, track_h,
+                (0.8, y),
+                98.4,
+                track_h,
                 boxstyle=f"round,pad=0,rounding_size={round_r}",
-                linewidth=1, edgecolor="#9dbbd6", facecolor="#e6f0fb"
+                linewidth=1,
+                edgecolor="#9dbbd6",
+                facecolor="#e6f0fb",
             )
             ax.add_patch(track)
 
             prog_w = max(0.001, min(98.4, float(v)))
             prog = FancyBboxPatch(
-                (0.8, y), prog_w, track_h,
+                (0.8, y),
+                prog_w,
+                track_h,
                 boxstyle=f"round,pad=0,rounding_size={round_r}",
-                linewidth=0, facecolor=AZUL, alpha=0.35
+                linewidth=0,
+                facecolor=AZUL,
+                alpha=0.35,
             )
             ax.add_patch(prog)
 
-            ax.add_patch(Circle((0.8 + round_r*0.6, y + track_h/2), round_r*0.9, color=AZUL, alpha=0.9))
+            ax.add_patch(
+                Circle(
+                    (0.8 + round_r * 0.6, y + track_h / 2),
+                    round_r * 0.9,
+                    color=AZUL,
+                    alpha=0.9,
+                )
+            )
             badge_w = 12.0
-            badge_h = track_h*0.8
+            badge_h = track_h * 0.8
             badge_x = 5.0
-            badge_y = y + (track_h - badge_h)/2
+            badge_y = y + (track_h - badge_h) / 2
             badge = FancyBboxPatch(
-                (badge_x, badge_y), badge_w, badge_h,
+                (badge_x, badge_y),
+                badge_w,
+                badge_h,
                 boxstyle=f"round,pad=0.25,rounding_size={badge_h/2}",
-                linewidth=1, edgecolor="#cfd8e3", facecolor="white"
+                linewidth=1,
+                edgecolor="#cfd8e3",
+                facecolor="white",
             )
             ax.add_patch(badge)
-            ax.text(badge_x + badge_w/2, y + track_h/2, f"{v:.1f}%", ha="center", va="center", fontsize=10)
-            ax.text(badge_x + badge_w + 3.0, y + track_h/2, lab, va="center", ha="left",
-                    fontsize=12, color="#0f172a")
+            ax.text(
+                badge_x + badge_w / 2,
+                y + track_h / 2,
+                f"{v:.1f}%",
+                ha="center",
+                va="center",
+                fontsize=10,
+            )
+            ax.text(
+                badge_x + badge_w + 3.0,
+                y + track_h / 2,
+                lab,
+                va="center",
+                ha="left",
+                fontsize=12,
+                color="#0f172a",
+            )
 
         ax.set_title(title, color=TEXTO)
 
@@ -875,7 +948,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
         ax.set_yticklabels(_wrap_labels(labels, 35))
         ax.invert_yaxis()
         ax.set_xlabel("Porcentaje")
-        ax.set_xlim(0, max(100, max(vals)*1.05))
+        ax.set_xlim(0, max(100, max(vals) * 1.05))
         for i, v in enumerate(vals):
             ax.text(v + 1, i, f"{v:.1f}%", va="center", fontsize=10)
         ax.set_title(title, color=TEXTO)
@@ -884,6 +957,7 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
     fig.savefig(buf, format="PNG", dpi=dpi, bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
     return buf.getvalue()
+
 
 
 # ============================================================================
@@ -1447,6 +1521,7 @@ for key in ["sheet_url_loaded", "reset_after_save"]:
 
 # Mensaje final
 st.toast("✅ App lista. Puedes generar, guardar y eliminar Paretos con total integración.", icon="✅")
+
 
 
 
