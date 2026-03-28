@@ -1157,8 +1157,145 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
 
 # ============================================================================
 # ============================== PARTE 9/12 =================================
-# =========================== MIC MAC (sin PDF) ==============================
+# ===================== MIC MAC (sugerido automático) ========================
 # ============================================================================
+
+def clasificar_variable_micmac(descriptor: str) -> str:
+    d = str(descriptor).lower().strip()
+
+    if any(x in d for x in ["droga", "búnker", "bunker", "narco", "venta de drogas"]):
+        return "drogas"
+
+    if any(x in d for x in ["alcohol", "licor", "ebriedad"]):
+        return "alcohol"
+
+    if any(x in d for x in ["homicidio", "lesiones", "violencia", "riñas", "disturbios", "delitos sexuales", "violación"]):
+        return "violencia"
+
+    if any(x in d for x in ["robo", "hurto", "asalto", "tacha", "bajonazo", "receptación", "estafa", "defraudación"]):
+        return "patrimonial"
+
+    if any(x in d for x in ["situación de calle", "desempleo", "inversión social", "familias disfuncionales", "desvinculación", "analfabetismo"]):
+        return "exclusion_social"
+
+    if any(x in d for x in ["infraestructura", "alumbrado", "lotes baldíos", "salubridad", "vial"]):
+        return "entorno"
+
+    if any(x in d for x in ["presencia policial", "corrupción policial", "inefectividad en el servicio de policía", "falta de capacitación policial"]):
+        return "institucional"
+
+    if any(x in d for x in ["personas en situación migratoria irregular", "xenofobia", "presencia multicultural"]):
+        return "movilidad_social"
+
+    return "otros"
+
+
+def peso_relacion_micmac(origen: str, destino: str) -> int:
+    """
+    Devuelve un peso sugerido 0-3 para la relación origen -> destino.
+    0 = nula, 1 = débil, 2 = media, 3 = fuerte
+    """
+    o = str(origen).lower().strip()
+    d = str(destino).lower().strip()
+
+    if o == d:
+        return 0
+
+    to = clasificar_variable_micmac(o)
+    td = clasificar_variable_micmac(d)
+
+    # Reglas directas fuertes
+    reglas_fuertes = [
+        ("consumo de drogas", "venta de drogas"),
+        ("consumo de alcohol en vía pública", "disturbios (riñas)"),
+        ("consumo de alcohol en vía pública", "violencia intrafamiliar"),
+        ("venta de drogas", "delincuencia organizada"),
+        ("personas en situación de calle", "consumo de drogas"),
+        ("falta de inversión social", "personas en situación de calle"),
+        ("falta de inversión social", "consumo de drogas"),
+        ("falta de presencia policial", "percepción de inseguridad"),
+    ]
+    for a, b in reglas_fuertes:
+        if a in o and b in d:
+            return 3
+
+    # Reglas directas medias
+    reglas_medias = [
+        ("consumo de drogas", "robo a personas"),
+        ("consumo de drogas", "hurto"),
+        ("venta de drogas", "robo a personas"),
+        ("venta de drogas", "homicidio"),
+        ("alcohol", "violencia"),
+        ("exclusion_social", "drogas"),
+        ("exclusion_social", "patrimonial"),
+        ("entorno", "patrimonial"),
+        ("institucional", "drogas"),
+        ("institucional", "violencia"),
+        ("institucional", "patrimonial"),
+    ]
+
+    for a, b in reglas_medias:
+        if a in ["alcohol", "exclusion_social", "entorno", "institucional"]:
+            if to == a and td == b:
+                return 2
+        else:
+            if a in o and b in d:
+                return 2
+
+    # Relación por familias temáticas
+    if to == td:
+        if to in ["drogas", "violencia", "patrimonial"]:
+            return 2
+        return 1
+
+    # Cruces temáticos probables
+    cruces_2 = {
+        ("drogas", "violencia"),
+        ("drogas", "patrimonial"),
+        ("alcohol", "violencia"),
+        ("exclusion_social", "drogas"),
+        ("exclusion_social", "violencia"),
+        ("exclusion_social", "patrimonial"),
+        ("entorno", "patrimonial"),
+        ("institucional", "drogas"),
+        ("institucional", "violencia"),
+        ("institucional", "patrimonial"),
+    }
+    if (to, td) in cruces_2:
+        return 2
+
+    cruces_1 = {
+        ("entorno", "violencia"),
+        ("entorno", "drogas"),
+        ("movilidad_social", "drogas"),
+        ("movilidad_social", "patrimonial"),
+        ("otros", "patrimonial"),
+        ("otros", "violencia"),
+    }
+    if (to, td) in cruces_1:
+        return 1
+
+    return 0
+
+
+def generar_matriz_micmac_sugerida(variables: List[str]) -> pd.DataFrame:
+    """
+    Genera una matriz MIC MAC sugerida automáticamente con base en reglas lógicas.
+    """
+    if not variables:
+        return pd.DataFrame()
+
+    matriz = pd.DataFrame(0, index=variables, columns=variables, dtype=int)
+
+    for origen in variables:
+        for destino in variables:
+            if origen == destino:
+                matriz.loc[origen, destino] = 0
+            else:
+                matriz.loc[origen, destino] = peso_relacion_micmac(origen, destino)
+
+    return matriz
+
 
 def construir_matriz_micmac(variables: List[str], edited_df: pd.DataFrame | None = None) -> pd.DataFrame:
     n = len(variables)
@@ -1170,7 +1307,7 @@ def construir_matriz_micmac(variables: List[str], edited_df: pd.DataFrame | None
         df.index = variables
         df.columns = variables
     else:
-        df = pd.DataFrame(0, index=variables, columns=variables, dtype=int)
+        df = generar_matriz_micmac_sugerida(variables)
 
     df = df.apply(pd.to_numeric, errors="coerce").fillna(0).astype(int)
     df = df.clip(lower=0, upper=3)
@@ -1197,17 +1334,19 @@ def calcular_micmac(matriz: pd.DataFrame) -> pd.DataFrame:
     med_dep = df["dependencia"].mean() if not df.empty else 0
 
     def zona(row):
+        if row["influencia"] == 0 and row["dependencia"] == 0:
+            return "Sin relación"
         if row["influencia"] >= med_infl and row["dependencia"] >= med_dep:
             return "Conflicto"
-        if row["influencia"] >= med_infl and row["dependencia"] < med_dep:
+        elif row["influencia"] >= med_infl and row["dependencia"] < med_dep:
             return "Poder"
-        if row["influencia"] < med_infl and row["dependencia"] >= med_dep:
+        elif row["influencia"] < med_infl and row["dependencia"] >= med_dep:
             return "Resultado"
-        return "Autónoma"
+        else:
+            return "Autónoma"
 
     df["zona"] = df.apply(zona, axis=1)
-    df = df.sort_values(["influencia", "dependencia"], ascending=[False, False]).reset_index(drop=True)
-    return df
+    return df.sort_values(["influencia", "dependencia"], ascending=[False, False]).reset_index(drop=True)
 
 
 def _micmac_matrix_png(matriz: pd.DataFrame, titulo: str = "Matriz MIC MAC") -> bytes:
@@ -1263,41 +1402,70 @@ def _micmac_map_png(df_mic: pd.DataFrame, titulo: str = "Mapa MIC MAC") -> bytes
         plt.close(fig)
         return buf.getvalue()
 
-    fig, ax = plt.subplots(figsize=(11, 7), dpi=220)
+    if df_mic["influencia"].sum() == 0:
+        fig, ax = plt.subplots(figsize=(8, 4), dpi=220)
+        ax.axis("off")
+        ax.text(
+            0.5, 0.5,
+            "La matriz MIC MAC no tiene relaciones definidas.\nDebe asignar o revisar los cruces para generar el mapa.",
+            ha="center", va="center", fontsize=13
+        )
+        buf = io.BytesIO()
+        fig.savefig(buf, format="PNG", dpi=220, bbox_inches="tight", pad_inches=0.08)
+        plt.close(fig)
+        return buf.getvalue()
+
+    fig, ax = plt.subplots(figsize=(12, 8), dpi=220)
 
     zone_colors = {
         "Conflicto": ROJO,
         "Poder": VERDE,
         "Resultado": AZUL,
         "Autónoma": NARANJA,
+        "Sin relación": GRIS,
     }
 
-    x = df_mic["dependencia"].to_numpy()
-    y = df_mic["influencia"].to_numpy()
+    x = df_mic["dependencia"].to_numpy(dtype=float)
+    y = df_mic["influencia"].to_numpy(dtype=float)
 
-    for _, r in df_mic.iterrows():
+    jitter = np.linspace(-0.12, 0.12, len(df_mic))
+
+    for idx, (_, r) in enumerate(df_mic.iterrows()):
+        xx = r["dependencia"] + jitter[idx]
+        yy = r["influencia"] + jitter[::-1][idx]
+
         ax.scatter(
-            r["dependencia"], r["influencia"],
-            s=120, alpha=0.9,
+            xx, yy,
+            s=140,
+            alpha=0.90,
             color=zone_colors.get(r["zona"], AZUL),
-            edgecolors="black", linewidths=0.5
+            edgecolors="black",
+            linewidths=0.6
         )
+
+        etiqueta = "\n".join(wrap(str(r["variable"]), width=22))
         ax.text(
-            r["dependencia"] + 0.12,
-            r["influencia"] + 0.12,
-            r["variable"],
-            fontsize=8
+            xx + 0.15,
+            yy + 0.15,
+            etiqueta,
+            fontsize=8,
+            ha="left",
+            va="bottom"
         )
 
     mean_x = x.mean() if len(x) else 0
     mean_y = y.mean() if len(y) else 0
+
     ax.axvline(mean_x, linestyle="--", color="#666666", linewidth=1)
     ax.axhline(mean_y, linestyle="--", color="#666666", linewidth=1)
 
-    ax.set_title(titulo, color=TEXTO, fontsize=16)
+    ax.set_title(titulo, color=TEXTO, fontsize=18)
     ax.set_xlabel("Dependencia")
     ax.set_ylabel("Influencia")
     ax.grid(True, alpha=0.25)
+
+    ax.set_xlim(left=min(x.min() - 1, 0), right=x.max() + 2)
+    ax.set_ylim(bottom=min(y.min() - 1, 0), top=y.max() + 2)
 
     buf = io.BytesIO()
     fig.tight_layout()
@@ -1314,39 +1482,75 @@ def ui_micmac(source_name: str, df_par: pd.DataFrame, key_prefix: str):
         st.info("No hay descriptores priorizados para construir MIC MAC.")
         return
 
-    variables = df_pri["descriptor"].tolist()
     st.caption(
-        "El MIC MAC se construye solo con las problemáticas priorizadas del Pareto. "
-        "No se incluye en los PDF, pero sí se puede descargar como imagen."
+        "La app genera una matriz sugerida automática con base en cruces lógicos entre variables. "
+        "Puedes revisarla y ajustarla manualmente."
     )
 
-    st.markdown("**Variables priorizadas que entran al MIC MAC:**")
-    st.dataframe(
-        df_pri[["descriptor", "frecuencia", "porcentaje"]].rename(columns={
-            "descriptor": "Variable",
-            "frecuencia": "Frecuencia",
-            "porcentaje": "%"
-        }),
-        use_container_width=True,
-        hide_index=True
+    opciones = df_pri["descriptor"].tolist()
+    default_vars = opciones[:8] if len(opciones) >= 8 else opciones
+
+    variables = st.multiselect(
+        "Variables que entrarán al MIC MAC",
+        options=opciones,
+        default=default_vars,
+        key=f"{key_prefix}_variables_micmac"
     )
 
-    matriz_base = construir_matriz_micmac(variables)
+    if len(variables) < 2:
+        st.warning("Selecciona al menos 2 variables para construir el MIC MAC.")
+        return
+
+    if len(variables) > 10:
+        st.error("Selecciona máximo 10 variables para un MIC MAC válido.")
+        return
+
+    st.markdown("**Variables seleccionadas**")
+    df_sel = df_pri[df_pri["descriptor"].isin(variables)][["descriptor", "frecuencia", "porcentaje"]].copy()
+    df_sel = df_sel.rename(columns={
+        "descriptor": "Variable",
+        "frecuencia": "Frecuencia",
+        "porcentaje": "%"
+    })
+    st.dataframe(df_sel, use_container_width=True, hide_index=True)
+
+    matriz_base = generar_matriz_micmac_sugerida(variables)
+
+    st.markdown("**Matriz de relaciones MIC MAC (sugerida automáticamente)**")
+    st.caption("0 = nula, 1 = débil, 2 = media, 3 = fuerte. Puedes corregir cualquier valor.")
+
     de = st.data_editor(
         matriz_base,
         key=f"{key_prefix}_micmac_editor",
         use_container_width=True,
         num_rows="fixed",
-        height=min(800, 120 + len(variables) * 38)
+        height=min(650, 150 + len(variables) * 42)
     )
 
-    matriz = construir_matriz_micmac(variables, edited_df=de)
+    matriz = de.copy()
+    matriz.index = variables
+    matriz.columns = variables
+    matriz = matriz.apply(pd.to_numeric, errors="coerce").fillna(0).astype(int).clip(0, 3)
+
+    for i in range(len(variables)):
+        matriz.iat[i, i] = 0
+
+    total_rel = int(matriz.to_numpy().sum())
+
+    if total_rel == 0:
+        st.error("⚠️ Debes asignar relaciones en la matriz. El MIC MAC no se interpreta con todos los valores en 0.")
+
     df_mic = calcular_micmac(matriz)
 
     st.markdown("**Resultados MIC MAC**")
-    st.dataframe(df_mic, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df_mic[["variable", "influencia", "dependencia", "zona"]],
+        use_container_width=True,
+        hide_index=True
+    )
 
     c1, c2 = st.columns(2)
+
     with c1:
         mat_png = _micmac_matrix_png(matriz, titulo=f"Matriz MIC MAC – {source_name}")
         st.image(mat_png, caption="Matriz MIC MAC", use_container_width=True)
@@ -1368,7 +1572,6 @@ def ui_micmac(source_name: str, df_par: pd.DataFrame, key_prefix: str):
             mime="image/png",
             key=f"{key_prefix}_dl_map"
         )
-
 
 # ============================================================================
 # ============================== PARTE 10/12 ================================
