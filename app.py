@@ -593,66 +593,197 @@ PAGE_W, PAGE_H = A4
 
 def _styles():
     ss = getSampleStyleSheet()
+
     ss.add(ParagraphStyle(
-        name="CoverTitle", fontName="Helvetica-Bold",
-        fontSize=30, leading=36, textColor=TEXTO, alignment=1, spaceAfter=10
+        name="CoverTitle",
+        fontName="Helvetica-Bold",
+        fontSize=28,
+        leading=34,
+        textColor=colors.HexColor("#0B3954"),
+        alignment=1,
+        spaceAfter=10
     ))
+
     ss.add(ParagraphStyle(
-        name="CoverSubtitle", parent=ss["Normal"], fontSize=12,
-        leading=16, textColor=GRIS, alignment=1, spaceAfter=10
+        name="CoverSubtitle",
+        parent=ss["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=14,
+        leading=18,
+        textColor=colors.HexColor("#1F5F8B"),
+        alignment=1,
+        spaceAfter=8
     ))
+
     ss.add(ParagraphStyle(
-        name="CoverDate", parent=ss["Normal"], fontSize=15,
-        leading=18, textColor=TEXTO, alignment=1, spaceBefore=8
+        name="CoverDate",
+        parent=ss["Normal"],
+        fontSize=12.5,
+        leading=16,
+        textColor=colors.HexColor("#4B5563"),
+        alignment=1,
+        spaceBefore=4,
+        spaceAfter=6
     ))
+
     ss.add(ParagraphStyle(
-        name="TitleBig", parent=ss["Title"], fontSize=24,
-        leading=28, textColor=TEXTO, alignment=0, spaceAfter=10
+        name="TitleBig",
+        parent=ss["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=21,
+        leading=25,
+        textColor=colors.HexColor("#0B3954"),
+        alignment=0,
+        spaceAfter=10
     ))
+
     ss.add(ParagraphStyle(
-        name="TitleBigCenter", parent=ss["Title"], fontSize=24,
-        leading=28, textColor=TEXTO, alignment=1, spaceAfter=10
+        name="TitleBigCenter",
+        parent=ss["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=21,
+        leading=25,
+        textColor=colors.HexColor("#0B3954"),
+        alignment=1,
+        spaceAfter=10
     ))
+
     ss.add(ParagraphStyle(
-        name="H1", parent=ss["Heading1"],
-        fontSize=18, leading=22, textColor=TEXTO, spaceAfter=8
+        name="H1",
+        parent=ss["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=17,
+        leading=21,
+        textColor=colors.HexColor("#124559"),
+        spaceAfter=8
     ))
+
     ss.add(ParagraphStyle(
-        name="H1Center", parent=ss["Heading1"],
-        fontSize=18, leading=22, textColor=TEXTO, spaceAfter=8, alignment=1
+        name="H1Center",
+        parent=ss["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=17,
+        leading=21,
+        textColor=colors.HexColor("#124559"),
+        spaceAfter=8,
+        alignment=1
     ))
+
     ss.add(ParagraphStyle(
-        name="Body", parent=ss["Normal"],
-        fontSize=11, leading=14, textColor="#111"
+        name="Body",
+        parent=ss["Normal"],
+        fontSize=11,
+        leading=16,
+        textColor=colors.HexColor("#1F2937"),
+        alignment=4
     ))
+
     ss.add(ParagraphStyle(
-        name="Small", parent=ss["Normal"],
-        fontSize=9.6, leading=12, textColor=GRIS
+        name="Small",
+        parent=ss["Normal"],
+        fontSize=9.6,
+        leading=12.5,
+        textColor=colors.HexColor("#6B7280")
     ))
+
     ss.add(ParagraphStyle(
-        name="TableHead", parent=ss["Normal"],
-        fontSize=11, leading=13, textColor=colors.white
+        name="TableHead",
+        parent=ss["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=10.5,
+        leading=12,
+        textColor=colors.white,
+        alignment=1
     ))
+
     ss.add(ParagraphStyle(
-        name="BulletList", parent=ss["Body"],
-        leftIndent=12, bulletIndent=0, spaceBefore=2, spaceAfter=2
+        name="BulletList",
+        parent=ss["Body"],
+        leftIndent=14,
+        bulletIndent=2,
+        spaceBefore=2,
+        spaceAfter=4
     ))
+
+    ss.add(ParagraphStyle(
+        name="SectionNote",
+        parent=ss["Normal"],
+        fontSize=10.2,
+        leading=13,
+        textColor=colors.HexColor("#374151"),
+        backColor=colors.HexColor("#F3F8FC"),
+        borderPadding=8,
+        borderRadius=4,
+        borderWidth=0.6,
+        borderColor=colors.HexColor("#C7DDF0")
+    ))
+
     return ss
 
 
 def _page_cover(canv, doc):
-    canv.setFillColor(colors.HexColor(TEXTO))
-    canv.rect(0, PAGE_H - 0.9 * cm, PAGE_W, 0.9 * cm, fill=1, stroke=0)
+    canv.saveState()
+
+    # Fondo superior principal
+    canv.setFillColor(colors.HexColor("#0B3954"))
+    canv.rect(0, PAGE_H - 2.0 * cm, PAGE_W, 2.0 * cm, fill=1, stroke=0)
+
+    # Franja secundaria
+    canv.setFillColor(colors.HexColor("#1F5F8B"))
+    canv.rect(0, PAGE_H - 2.35 * cm, PAGE_W, 0.35 * cm, fill=1, stroke=0)
+
+    # Línea decorativa media
+    canv.setFillColor(colors.HexColor("#D9A404"))
+    canv.rect(2 * cm, PAGE_H - 6.2 * cm, PAGE_W - 4 * cm, 0.08 * cm, fill=1, stroke=0)
+
+    # Pie decorativo
+    canv.setFillColor(colors.HexColor("#EAF3F9"))
+    canv.rect(0, 0, PAGE_W, 1.3 * cm, fill=1, stroke=0)
+
+    canv.setFillColor(colors.HexColor("#1F5F8B"))
+    canv.rect(0, 0, PAGE_W, 0.28 * cm, fill=1, stroke=0)
+
+    canv.restoreState()
 
 
-def _page_normal(_canv, _doc):
-    pass
+def _page_normal(canv, doc):
+    canv.saveState()
+
+    # Encabezado discreto
+    canv.setFillColor(colors.HexColor("#0B3954"))
+    canv.rect(doc.leftMargin, PAGE_H - 1.35 * cm, doc.width, 0.16 * cm, fill=1, stroke=0)
+
+    canv.setFillColor(colors.HexColor("#1F5F8B"))
+    canv.rect(doc.leftMargin, PAGE_H - 1.58 * cm, doc.width * 0.55, 0.08 * cm, fill=1, stroke=0)
+
+    # Pie de página
+    canv.setFillColor(colors.HexColor("#EAF3F9"))
+    canv.rect(0, 0, PAGE_W, 1.0 * cm, fill=1, stroke=0)
+
+    canv.setFillColor(colors.HexColor("#1F5F8B"))
+    canv.rect(0, 0, PAGE_W, 0.16 * cm, fill=1, stroke=0)
+
+    canv.setFont("Helvetica", 8.5)
+    canv.setFillColor(colors.HexColor("#4B5563"))
+    canv.drawRightString(PAGE_W - doc.rightMargin, 0.42 * cm, f"Página {doc.page}")
+
+    canv.restoreState()
 
 
-def _page_last(canv, _doc):
-    canv.setFillColor(colors.HexColor(TEXTO))
-    canv.rect(0, 0, PAGE_W, 0.9 * cm, fill=1, stroke=0)
+def _page_last(canv, doc):
+    canv.saveState()
 
+    canv.setFillColor(colors.HexColor("#0B3954"))
+    canv.rect(0, PAGE_H - 1.2 * cm, PAGE_W, 1.2 * cm, fill=1, stroke=0)
+
+    canv.setFillColor(colors.HexColor("#D9A404"))
+    canv.rect(0, 0, PAGE_W, 0.32 * cm, fill=1, stroke=0)
+
+    canv.setFont("Helvetica", 8.5)
+    canv.setFillColor(colors.HexColor("#4B5563"))
+    canv.drawRightString(PAGE_W - doc.rightMargin, 0.6 * cm, f"Página {doc.page}")
+
+    canv.restoreState()
 
 # ============================================================================
 # ============================== PARTE 7/12 =================================
@@ -897,7 +1028,7 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         parent=stys["Normal"],
         fontSize=9.6,
         leading=12,
-        textColor="#111111",
+        textColor=colors.HexColor("#111111"),
         wordWrap="CJK",
         spaceBefore=0,
         spaceAfter=0,
@@ -923,19 +1054,28 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
 
     t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(TEXTO)),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0B3954")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 11),
+        ("FONTSIZE", (0, 0), (-1, 0), 10.5),
+
         ("FONTSIZE", (0, 1), (-1, -1), 9.6),
         ("ALIGN", (0, 1), (0, -1), "LEFT"),
         ("ALIGN", (1, 1), (-1, -2), "RIGHT"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.whitesmoke, colors.Color(0.97, 0.97, 0.97)]),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-        ("BACKGROUND", (0, total_index), (-1, total_index), colors.Color(0.93, 0.96, 0.99)),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [
+            colors.HexColor("#F8FBFD"),
+            colors.HexColor("#EDF5FA")
+        ]),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C9D8E6")),
+
+        ("BACKGROUND", (0, total_index), (-1, total_index), colors.HexColor("#DCEAF6")),
         ("FONTNAME", (0, total_index), (-1, total_index), "Helvetica-Bold"),
         ("ALIGN", (1, total_index), (1, total_index), "RIGHT"),
         ("ALIGN", (2, total_index), (2, total_index), "RIGHT"),
@@ -1000,31 +1140,89 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
         PageTemplate(id="Normal", frames=[frame_std], onPage=_page_normal),
         PageTemplate(id="Last", frames=[frame_last], onPage=_page_last),
     ])
+
     stys = _styles()
     story: List = []
     df_pri = obtener_df_priorizado(df_par)
 
+    logo_1 = Path("001.png")
+    logo_2 = Path("002.png")
+
+    # -------------------------
+    # PORTADA
+    # -------------------------
     story += [NextPageTemplate("Normal")]
-    story += [Spacer(1, 2.2 * cm)]
-    story += [Paragraph(f"Informe de Resultados Diagrama de Pareto - {nombre_informe}", stys["CoverTitle"])]
-    story += [Paragraph("Estrategia Sembremos Seguridad", stys["CoverSubtitle"])]
-    story += [Paragraph(datetime.now().strftime("Fecha: %d/%m/%Y"), stys["CoverDate"])]
+    story += [Spacer(1, 0.8 * cm)]
+
+    if logo_1.exists():
+        story += [RLImage(str(logo_1), width=6.0 * cm, height=6.0 * cm, hAlign="CENTER")]
+        story += [Spacer(1, 0.18 * cm)]
+
+    if logo_2.exists():
+        story += [RLImage(str(logo_2), width=10.5 * cm, height=2.3 * cm, hAlign="CENTER")]
+        story += [Spacer(1, 0.45 * cm)]
+
+    story += [Paragraph("Informe de Resultados", stys["CoverTitle"])]
+    story += [Paragraph("Análisis de Problemáticas Priorizadas en Seguridad Ciudadana", stys["CoverSubtitle"])]
+    story += [Spacer(1, 0.20 * cm)]
+    story += [Paragraph(f"<b>{nombre_informe}</b>", stys["CoverSubtitle"])]
+    story += [Spacer(1, 0.35 * cm)]
+    story += [Paragraph("Estrategia Integral de Prevención para la Seguridad Pública", stys["CoverDate"])]
+    story += [Paragraph("“Sembremos Seguridad”", stys["CoverDate"])]
+    story += [Spacer(1, 0.15 * cm)]
+    story += [Paragraph(datetime.now().strftime("Fecha de emisión: %d/%m/%Y"), stys["CoverDate"])]
+    story += [Spacer(1, 0.65 * cm)]
+    story += [Paragraph(
+        "Documento técnico generado a partir del procesamiento y priorización de datos obtenidos mediante encuestas.",
+        stys["SectionNote"]
+    )]
     story += [PageBreak()]
 
+    # -------------------------
+    # INTRODUCCIÓN
+    # -------------------------
     story += [Paragraph("Introducción", stys["TitleBig"]), Spacer(1, 0.2 * cm)]
     story += [Paragraph(
-        "Este informe presenta un análisis tipo <b>Pareto (80/20)</b> sobre los descriptores seleccionados. "
-        "Para mejorar la lectura del documento, el gráfico y la tabla del informe muestran "
-        "únicamente las <b>problemáticas priorizadas</b>.",
+        "Este informe presenta los resultados del análisis de la información recopilada mediante encuestas, "
+        "procesada a través de un enfoque metodológico que permite identificar, agrupar y priorizar las "
+        "principales problemáticas en materia de seguridad ciudadana.",
         stys["Body"]
-    ), Spacer(1, 0.35 * cm)]
+    )]
+    story += [Spacer(1, 0.22 * cm)]
+    story += [Paragraph(
+        "En el marco de la Estrategia Integral de Prevención para la Seguridad Pública "
+        "“Sembremos Seguridad”, los datos fueron tratados por el equipo especializado utilizando "
+        "herramientas como ArcGIS, lo que permitió una clasificación precisa de las variables según su "
+        "relevancia y tipología.",
+        stys["Body"]
+    )]
+    story += [Spacer(1, 0.22 * cm)]
+    story += [Paragraph(
+        "El objetivo es ofrecer una visión clara de las áreas prioritarias, facilitando la comprensión "
+        "de los principales problemas y aportando insumos para el diseño e implementación de acciones "
+        "efectivas que fortalezcan la seguridad y el bienestar de las comunidades.",
+        stys["Body"]
+    )]
+    story += [Spacer(1, 0.45 * cm)]
 
-    story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.2 * cm)]
-    story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.25 * cm)]
-    story += [Paragraph(_texto_priorizados(df_par), stys["Small"]), Spacer(1, 0.3 * cm)]
+    # -------------------------
+    # RESULTADOS GENERALES
+    # -------------------------
+    story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.15 * cm)]
+    story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.22 * cm)]
+    story += [Paragraph(
+        "El diagrama incluido a continuación se presenta de forma completa para una mejor lectura integral del comportamiento observado. "
+        "No obstante, la tabla resumen muestra únicamente los descriptores priorizados, con el fin de enfocar la interpretación en los temas de mayor relevancia.",
+        stys["SectionNote"]
+    )]
+    story += [Spacer(1, 0.32 * cm)]
 
+    # -------------------------
+    # DIAGRAMA COMPLETO
+    # -------------------------
     from PIL import Image as PILImage
-    pareto_png = _pareto_png(df_pri, "Problemáticas priorizadas", solo_priorizados=False)
+    pareto_png = _pareto_png(df_par, "Diagrama de Pareto completo", solo_priorizados=False)
+
     with io.BytesIO(pareto_png) as _b:
         im = PILImage.open(_b)
         w_px, h_px = im.size
@@ -1034,19 +1232,26 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
 
     story.append(KeepTogether([
         RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts),
-        Spacer(1, 0.30 * cm),
+        Spacer(1, 0.22 * cm),
         Paragraph(
-            "El diagrama muestra únicamente el subconjunto priorizado de descriptores.",
+            "Figura 1. Diagrama de Pareto completo de las problemáticas registradas.",
             stys["Small"]
         ),
     ]))
 
+    # -------------------------
+    # TABLA SOLO PRIORIZADOS
+    # -------------------------
     story.append(KeepTogether([
-        Spacer(1, 0.25 * cm),
+        Spacer(1, 0.35 * cm),
+        Paragraph("Tabla de descriptores priorizados", stys["TitleBig"]),
+        Spacer(1, 0.18 * cm),
         _tabla_resultados_flowable(df_par, doc.width),
     ]))
 
-    # Modalidades: permitir solo si corresponden a descriptores priorizados seleccionados
+    # -------------------------
+    # MODALIDADES
+    # -------------------------
     prior_desc = set(df_pri["descriptor"].tolist())
     for sec in desgloses:
         descriptor = sec.get("descriptor", "").strip()
@@ -1058,16 +1263,22 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
         pares = [(r.get("Etiqueta", ""), float(r.get("%", 0) or 0)) for r in rows]
 
         bloque = [
-            Spacer(1, 0.4 * cm),
+            Spacer(1, 0.45 * cm),
             Paragraph(f"Modalidades — {descriptor}", stys["TitleBig"]),
-            Spacer(1, 0.1 * cm),
+            Spacer(1, 0.12 * cm),
             Paragraph(_texto_modalidades(descriptor, pares), stys["Small"]),
-            Spacer(1, 0.2 * cm),
-            RLImage(io.BytesIO(_modalidades_png(descriptor or 'Modalidades', pares, kind=chart_kind)),
-                    width=doc.width, height=8.5 * cm),
+            Spacer(1, 0.20 * cm),
+            RLImage(
+                io.BytesIO(_modalidades_png(descriptor or "Modalidades", pares, kind=chart_kind)),
+                width=doc.width,
+                height=8.5 * cm
+            ),
         ]
         story.append(KeepTogether(bloque))
 
+    # -------------------------
+    # CONCLUSIONES
+    # -------------------------
     story += [PageBreak(), NextPageTemplate("Last")]
     story += [
         Paragraph("Conclusiones y recomendaciones", stys["TitleBigCenter"]),
@@ -1153,7 +1364,6 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                 })
 
     return desgloses
-
 
 # ============================================================================
 # ============================== PARTE 9/12 =================================
