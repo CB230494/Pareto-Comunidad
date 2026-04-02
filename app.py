@@ -1159,7 +1159,15 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
         story += [Spacer(1, 0.18 * cm)]
 
     if logo_2.exists():
-        story += [RLImage(str(logo_2), width=10.5 * cm, height=2.3 * cm, hAlign="CENTER")]
+        from PIL import Image as PILImage
+
+        with PILImage.open(logo_2) as im2:
+          w2, h2 = im2.size
+
+        ancho_logo2 = 10.5 * cm
+        alto_logo2 = (h2 / w2) * ancho_logo2
+
+        story += [RLImage(str(logo_2), width=ancho_logo2, height=alto_logo2, hAlign="CENTER")]
         story += [Spacer(1, 0.45 * cm)]
 
     story += [Paragraph("Informe de Resultados", stys["CoverTitle"])]
