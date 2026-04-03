@@ -199,13 +199,14 @@ def calcular_pareto(df_in: pd.DataFrame) -> pd.DataFrame:
     # tramo clásico visual
     df["segmento_real"] = np.where(df["pct_acum"] <= 80.00, "80%", "20%")
 
-    # tramo priorizado operativo:
-    # incluye también el descriptor que hace cruzar el 80%
-    prev_pct = df["pct_acum"].shift(fill_value=0)
-    mask_prior = (prev_pct < 80.0)
-    if len(mask_prior) > 0:
-        mask_prior.iloc[0] = True
-    df["segmento"] = np.where(mask_prior, "PRIORIZADO", "NO PRIORIZADO")
+    # tramo priorizado estricto:
+    # SOLO lo que esté en 80.00% o menos
+    df["segmento"] = np.where(df["pct_acum"] <= 80.00, "PRIORIZADO", "NO PRIORIZADO")
+
+    # seguridad: si por algún caso extremo ninguno quedó <=80,
+    # al menos deja el primero priorizado
+    if not df.empty and (df["segmento"] == "PRIORIZADO").sum() == 0:
+        df.loc[0, "segmento"] = "PRIORIZADO"
 
     return df.reset_index(drop=True)
 
