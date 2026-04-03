@@ -1727,25 +1727,30 @@ def _micmac_crear_plantilla_excel(
             "bg_color": "#0B3954",
             "font_color": "white",
             "border": 1,
-            "text_wrap": True
+            "text_wrap": True,
+            "locked": True
         })
         row_hdr_fmt = wb.add_format({
             "bold": True,
             "bg_color": "#DCEAF6",
             "border": 1,
-            "text_wrap": True
+            "text_wrap": True,
+            "locked": True
         })
         cell_fmt = wb.add_format({
             "align": "center",
             "valign": "vcenter",
-            "border": 1
+            "border": 1,
+            "locked": False
         })
         diag_fmt = wb.add_format({
             "align": "center",
             "valign": "vcenter",
             "border": 1,
-            "bg_color": "#E5E7EB",
-            "bold": True
+            "bg_color": "#BFBFBF",
+            "font_color": "#000000",
+            "bold": True,
+            "locked": True
         })
         note_fmt = wb.add_format({
             "text_wrap": True,
@@ -1774,25 +1779,45 @@ def _micmac_crear_plantilla_excel(
 
         ws.freeze_panes(1, 1)
 
-        # Validación 0-3
-        ws.data_validation(1, 1, n, n, {
-            "validate": "integer",
-            "criteria": "between",
-            "minimum": 0,
-            "maximum": 3,
-            "input_title": "Valor MIC MAC",
-            "input_message": "Use únicamente: 0, 1, 2 o 3",
-            "error_title": "Valor inválido",
-            "error_message": "Solo se permiten valores enteros entre 0 y 3"
-        })
+        # Validación SOLO para celdas fuera de diagonal
+        for r in range(1, n + 1):
+            for c in range(1, n + 1):
+                if r != c:
+                    ws.data_validation(r, c, r, c, {
+                        "validate": "integer",
+                        "criteria": "between",
+                        "minimum": 0,
+                        "maximum": 3,
+                        "input_title": "Valor MIC MAC",
+                        "input_message": "Use únicamente: 0, 1, 2 o 3",
+                        "error_title": "Valor inválido",
+                        "error_message": "Solo se permiten valores enteros entre 0 y 3"
+                    })
+
+        # Protección de hoja:
+        # encabezados y diagonal bloqueados; resto editable
+        ws.protect("micmac")
+        ws.protection_format_cells = False
+        ws.protection_format_columns = False
+        ws.protection_format_rows = False
+        ws.protection_insert_columns = False
+        ws.protection_insert_rows = False
+        ws.protection_insert_hyperlinks = False
+        ws.protection_delete_columns = False
+        ws.protection_delete_rows = False
+        ws.protection_sort = False
+        ws.protection_autofilter = False
+        ws.protection_pivot_tables = False
+        ws.protection_select_locked_cells = True
+        ws.protection_select_unlocked_cells = True
 
         # ---------------- Hoja instrucciones ----------------
         instrucciones = pd.DataFrame({
             "Instrucción": [
                 "Complete únicamente la hoja Matriz_MICMAC.",
                 "No cambie nombres de variables ni encabezados.",
-                "La diagonal principal debe permanecer en 0.",
-                "Valores permitidos: 0 = nula, 1 = débil, 2 = media, 3 = fuerte.",
+                "La diagonal principal está bloqueada y debe permanecer en 0.",
+                "Valores permitidos fuera de la diagonal: 0 = nula, 1 = débil, 2 = media, 3 = fuerte.",
                 "Luego cargue este mismo archivo en la app para generar el análisis MIC MAC."
             ]
         })
