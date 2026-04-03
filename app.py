@@ -1375,7 +1375,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
 
 # ============================================================================
 # ============================== PARTE 9/12 =================================
-# ===================== MIC MAC (sugerido automático) ========================
+# ===================== MIC MAC por Excel (plantilla + carga) ===============
 # ============================================================================
 
 def clasificar_variable_micmac(descriptor: str) -> str:
@@ -1422,7 +1422,6 @@ def peso_relacion_micmac(origen: str, destino: str) -> int:
     to = clasificar_variable_micmac(o)
     td = clasificar_variable_micmac(d)
 
-    # Reglas directas fuertes
     reglas_fuertes = [
         ("consumo de drogas", "venta de drogas"),
         ("consumo de alcohol en vía pública", "disturbios (riñas)"),
@@ -1437,7 +1436,6 @@ def peso_relacion_micmac(origen: str, destino: str) -> int:
         if a in o and b in d:
             return 3
 
-    # Reglas directas medias
     reglas_medias = [
         ("consumo de drogas", "robo a personas"),
         ("consumo de drogas", "hurto"),
@@ -1460,13 +1458,11 @@ def peso_relacion_micmac(origen: str, destino: str) -> int:
             if a in o and b in d:
                 return 2
 
-    # Relación por familias temáticas
     if to == td:
         if to in ["drogas", "violencia", "patrimonial"]:
             return 2
         return 1
 
-    # Cruces temáticos probables
     cruces_2 = {
         ("drogas", "violencia"),
         ("drogas", "patrimonial"),
@@ -1578,8 +1574,8 @@ def _micmac_matrix_png(matriz: pd.DataFrame, titulo: str = "Matriz MIC MAC") -> 
         return buf.getvalue()
 
     n = len(matriz)
-    fig_w = max(8, n * 0.9)
-    fig_h = max(6, n * 0.75)
+    fig_w = max(8, n * 0.48)
+    fig_h = max(6, n * 0.42)
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=220)
     arr = matriz.to_numpy()
@@ -1587,8 +1583,8 @@ def _micmac_matrix_png(matriz: pd.DataFrame, titulo: str = "Matriz MIC MAC") -> 
 
     ax.set_xticks(np.arange(n))
     ax.set_yticks(np.arange(n))
-    ax.set_xticklabels(_wrap_labels(matriz.columns.tolist(), 14), fontsize=8)
-    ax.set_yticklabels(_wrap_labels(matriz.index.tolist(), 16), fontsize=8)
+    ax.set_xticklabels(_wrap_labels(matriz.columns.tolist(), 16), fontsize=7)
+    ax.set_yticklabels(_wrap_labels(matriz.index.tolist(), 18), fontsize=7)
 
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
@@ -1596,7 +1592,7 @@ def _micmac_matrix_png(matriz: pd.DataFrame, titulo: str = "Matriz MIC MAC") -> 
         for j in range(n):
             val = int(arr[i, j])
             txt_color = "white" if val >= 2 else "#0f172a"
-            ax.text(j, i, str(val), ha="center", va="center", color=txt_color, fontsize=8)
+            ax.text(j, i, str(val), ha="center", va="center", color=txt_color, fontsize=6.5)
 
     ax.set_title(titulo, color=TEXTO, fontsize=16)
     ax.set_xlabel("Dependencia")
@@ -1646,7 +1642,7 @@ def _micmac_map_png(df_mic: pd.DataFrame, titulo: str = "Mapa MIC MAC") -> bytes
     x = df_mic["dependencia"].to_numpy(dtype=float)
     y = df_mic["influencia"].to_numpy(dtype=float)
 
-    jitter = np.linspace(-0.12, 0.12, len(df_mic))
+    jitter = np.linspace(-0.12, 0.12, len(df_mic)) if len(df_mic) > 1 else np.array([0.0])
 
     for idx, (_, r) in enumerate(df_mic.iterrows()):
         xx = r["dependencia"] + jitter[idx]
@@ -1692,6 +1688,244 @@ def _micmac_map_png(df_mic: pd.DataFrame, titulo: str = "Mapa MIC MAC") -> bytes
     return buf.getvalue()
 
 
+def _micmac_validar_valores(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out = out.apply(pd.to_numeric, errors="coerce").fillna(0).astype(int)
+    out = out.clip(lower=0, upper=3)
+    return out
+
+
+def _micmac_crear_plantilla_excel(
+    variables: List[str],
+    nombre_fuente: str = "MICMAC",
+    usar_sugerida: bool = False
+) -> bytes:
+    if not variables:
+        return b""
+
+    matriz = (
+        generar_matriz_micmac_sugerida(variables)
+        if usar_sugerida else
+        pd.DataFrame(0, index=variables, columns=variables, dtype=int)
+    )
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        # ---------------- Hoja matriz ----------------
+        sheet_m = "Matriz_MICMAC"
+        matriz_export = matriz.copy()
+        matriz_export.insert(0, "Variable", matriz_export.index)
+        matriz_export.to_excel(writer, sheet_name=sheet_m, index=False)
+
+        wb = writer.book
+        ws = writer.sheets[sheet_m]
+
+        hdr_fmt = wb.add_format({
+            "bold": True,
+            "align": "center",
+            "valign": "vcenter",
+            "bg_color": "#0B3954",
+            "font_color": "white",
+            "border": 1,
+            "text_wrap": True
+        })
+        row_hdr_fmt = wb.add_format({
+            "bold": True,
+            "bg_color": "#DCEAF6",
+            "border": 1,
+            "text_wrap": True
+        })
+        cell_fmt = wb.add_format({
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1
+        })
+        diag_fmt = wb.add_format({
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1,
+            "bg_color": "#E5E7EB",
+            "bold": True
+        })
+        note_fmt = wb.add_format({
+            "text_wrap": True,
+            "valign": "top",
+            "border": 1
+        })
+
+        n = len(variables)
+
+        ws.set_row(0, 36)
+        ws.set_column(0, 0, 34)
+        for c in range(1, n + 1):
+            ws.set_column(c, c, 16)
+
+        for c in range(0, n + 1):
+            ws.write(0, c, matriz_export.columns[c], hdr_fmt)
+
+        for r in range(1, n + 1):
+            ws.write(r, 0, variables[r - 1], row_hdr_fmt)
+
+        for r in range(n):
+            for c in range(n):
+                val = int(matriz.iat[r, c])
+                fmt = diag_fmt if r == c else cell_fmt
+                ws.write(r + 1, c + 1, val, fmt)
+
+        ws.freeze_panes(1, 1)
+
+        # Validación 0-3
+        ws.data_validation(1, 1, n, n, {
+            "validate": "integer",
+            "criteria": "between",
+            "minimum": 0,
+            "maximum": 3,
+            "input_title": "Valor MIC MAC",
+            "input_message": "Use únicamente: 0, 1, 2 o 3",
+            "error_title": "Valor inválido",
+            "error_message": "Solo se permiten valores enteros entre 0 y 3"
+        })
+
+        # ---------------- Hoja instrucciones ----------------
+        instrucciones = pd.DataFrame({
+            "Instrucción": [
+                "Complete únicamente la hoja Matriz_MICMAC.",
+                "No cambie nombres de variables ni encabezados.",
+                "La diagonal principal debe permanecer en 0.",
+                "Valores permitidos: 0 = nula, 1 = débil, 2 = media, 3 = fuerte.",
+                "Luego cargue este mismo archivo en la app para generar el análisis MIC MAC."
+            ]
+        })
+        instrucciones.to_excel(writer, sheet_name="Instrucciones", index=False)
+        ws_i = writer.sheets["Instrucciones"]
+        ws_i.set_column(0, 0, 95, note_fmt)
+
+        # ---------------- Hoja variables ----------------
+        pd.DataFrame({"Variables priorizadas": variables}).to_excel(
+            writer, sheet_name="Variables", index=False
+        )
+        ws_v = writer.sheets["Variables"]
+        ws_v.set_column(0, 0, 55)
+
+        # ---------------- Hoja metadata ----------------
+        meta = pd.DataFrame({
+            "Campo": ["Fuente", "Fecha de generación", "Cantidad de variables", "Tipo plantilla"],
+            "Valor": [
+                nombre_fuente,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                len(variables),
+                "Sugerida" if usar_sugerida else "En blanco"
+            ]
+        })
+        meta.to_excel(writer, sheet_name="Metadata", index=False)
+        ws_meta = writer.sheets["Metadata"]
+        ws_meta.set_column(0, 1, 30)
+
+    return output.getvalue()
+
+
+def _micmac_leer_excel_subido(file, variables_esperadas: List[str]) -> Tuple[pd.DataFrame, str]:
+    if file is None:
+        return pd.DataFrame(), "No se cargó ningún archivo."
+
+    try:
+        xls = pd.ExcelFile(file)
+    except Exception as e:
+        return pd.DataFrame(), f"No se pudo abrir el Excel: {e}"
+
+    if "Matriz_MICMAC" not in xls.sheet_names:
+        return pd.DataFrame(), "El archivo no contiene la hoja 'Matriz_MICMAC'."
+
+    try:
+        df = pd.read_excel(file, sheet_name="Matriz_MICMAC")
+    except Exception as e:
+        return pd.DataFrame(), f"No se pudo leer la hoja 'Matriz_MICMAC': {e}"
+
+    if df.empty:
+        return pd.DataFrame(), "La hoja 'Matriz_MICMAC' está vacía."
+
+    if "Variable" not in df.columns:
+        return pd.DataFrame(), "La hoja 'Matriz_MICMAC' debe tener una columna llamada 'Variable'."
+
+    filas = [str(x).strip() for x in df["Variable"].tolist()]
+    cols = [str(c).strip() for c in df.columns.tolist()[1:]]
+    esperadas = [str(v).strip() for v in variables_esperadas]
+
+    if filas != esperadas:
+        return pd.DataFrame(), "Las variables de las filas no coinciden exactamente con las priorizadas esperadas."
+
+    if cols != esperadas:
+        return pd.DataFrame(), "Las variables de las columnas no coinciden exactamente con las priorizadas esperadas."
+
+    mat = df.set_index("Variable").copy()
+    mat = _micmac_validar_valores(mat)
+
+    if mat.shape[0] != mat.shape[1]:
+        return pd.DataFrame(), "La matriz no es cuadrada."
+
+    for i in range(len(mat)):
+        mat.iat[i, i] = 0
+
+    return mat, ""
+
+
+def _micmac_exportar_resultados_excel(
+    matriz: pd.DataFrame,
+    df_mic: pd.DataFrame,
+    source_name: str
+) -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        wb = writer.book
+
+        # Hoja matriz
+        matriz_out = matriz.copy()
+        matriz_out.insert(0, "Variable", matriz_out.index)
+        matriz_out.to_excel(writer, sheet_name="Matriz_MICMAC", index=False)
+        ws_m = writer.sheets["Matriz_MICMAC"]
+        ws_m.set_column(0, 0, 34)
+        for c in range(1, len(matriz.columns) + 1):
+            ws_m.set_column(c, c, 16)
+
+        # Hoja análisis
+        df_mic.to_excel(writer, sheet_name="Analisis_MICMAC", index=False)
+        ws_a = writer.sheets["Analisis_MICMAC"]
+        ws_a.set_column(0, 0, 42)
+        ws_a.set_column(1, 2, 14)
+        ws_a.set_column(3, 3, 16)
+
+        # Hoja coordenadas
+        coords = df_mic[["variable", "dependencia", "influencia", "zona"]].copy()
+        coords.to_excel(writer, sheet_name="Mapa_MICMAC", index=False)
+        ws_c = writer.sheets["Mapa_MICMAC"]
+        ws_c.set_column(0, 0, 42)
+        ws_c.set_column(1, 2, 14)
+        ws_c.set_column(3, 3, 16)
+
+        # Hoja resumen
+        resumen = pd.DataFrame({
+            "Campo": [
+                "Fuente",
+                "Fecha procesamiento",
+                "Cantidad variables",
+                "Suma influencia",
+                "Suma dependencia"
+            ],
+            "Valor": [
+                source_name,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                len(matriz.index),
+                int(df_mic["influencia"].sum()) if not df_mic.empty else 0,
+                int(df_mic["dependencia"].sum()) if not df_mic.empty else 0
+            ]
+        })
+        resumen.to_excel(writer, sheet_name="Resumen", index=False)
+        ws_r = writer.sheets["Resumen"]
+        ws_r.set_column(0, 1, 30)
+
+    return output.getvalue()
+
+
 def ui_micmac(source_name: str, df_par: pd.DataFrame, key_prefix: str):
     st.subheader(f"🧩 MIC MAC — {source_name}")
 
@@ -1701,26 +1935,22 @@ def ui_micmac(source_name: str, df_par: pd.DataFrame, key_prefix: str):
         return
 
     st.caption(
-        "La app genera una matriz sugerida automática con base en cruces lógicos entre variables. "
-        "Puedes revisarla y ajustarla manualmente."
+        "Ahora el MIC MAC trabaja por plantilla Excel. "
+        "La app toma todas las priorizadas que selecciones, te genera un Excel, "
+        "tú lo completas fuera de la app y luego lo subes para generar el análisis."
     )
 
     opciones = df_pri["descriptor"].tolist()
-    default_vars = opciones[:8] if len(opciones) >= 8 else opciones
 
     variables = st.multiselect(
-        "Variables que entrarán al MIC MAC",
+        "Variables priorizadas que entrarán al MIC MAC",
         options=opciones,
-        default=default_vars,
-        key=f"{key_prefix}_variables_micmac"
+        default=opciones,
+        key=f"{key_prefix}_variables_micmac_excel"
     )
 
     if len(variables) < 2:
         st.warning("Selecciona al menos 2 variables para construir el MIC MAC.")
-        return
-
-    if len(variables) > 10:
-        st.error("Selecciona máximo 10 variables para un MIC MAC válido.")
         return
 
     st.markdown("**Variables seleccionadas**")
@@ -1732,35 +1962,72 @@ def ui_micmac(source_name: str, df_par: pd.DataFrame, key_prefix: str):
     })
     st.dataframe(df_sel, use_container_width=True, hide_index=True)
 
-    matriz_base = generar_matriz_micmac_sugerida(variables)
+    st.divider()
+    st.markdown("### 1) Descargar plantilla Excel para llenar cruces")
 
-    st.markdown("**Matriz de relaciones MIC MAC (sugerida automáticamente)**")
-    st.caption("0 = nula, 1 = débil, 2 = media, 3 = fuerte. Puedes corregir cualquier valor.")
+    ctpl1, ctpl2 = st.columns(2)
 
-    de = st.data_editor(
-        matriz_base,
-        key=f"{key_prefix}_micmac_editor",
-        use_container_width=True,
-        num_rows="fixed",
-        height=min(650, 150 + len(variables) * 42)
+    with ctpl1:
+        plantilla_blanca = _micmac_crear_plantilla_excel(
+            variables=variables,
+            nombre_fuente=source_name,
+            usar_sugerida=False
+        )
+        st.download_button(
+            "📥 Descargar plantilla MIC MAC en blanco",
+            data=plantilla_blanca,
+            file_name=f"Plantilla_MICMAC_{source_name.replace(' ', '_')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"{key_prefix}_plantilla_blanca"
+        )
+
+    with ctpl2:
+        plantilla_sugerida = _micmac_crear_plantilla_excel(
+            variables=variables,
+            nombre_fuente=source_name,
+            usar_sugerida=True
+        )
+        st.download_button(
+            "📥 Descargar plantilla MIC MAC sugerida",
+            data=plantilla_sugerida,
+            file_name=f"Plantilla_MICMAC_Sugerida_{source_name.replace(' ', '_')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"{key_prefix}_plantilla_sugerida"
+        )
+
+    st.divider()
+    st.markdown("### 2) Subir Excel completado")
+
+    archivo_micmac = st.file_uploader(
+        "Sube aquí el archivo Excel MIC MAC ya lleno",
+        type=["xlsx"],
+        key=f"{key_prefix}_uploader_excel_micmac"
     )
 
-    matriz = de.copy()
-    matriz.index = variables
-    matriz.columns = variables
-    matriz = matriz.apply(pd.to_numeric, errors="coerce").fillna(0).astype(int).clip(0, 3)
+    if archivo_micmac is None:
+        st.info("Descarga la plantilla, complétala en Excel y luego vuelve a subirla aquí.")
+        return
 
-    for i in range(len(variables)):
-        matriz.iat[i, i] = 0
+    matriz, err = _micmac_leer_excel_subido(archivo_micmac, variables)
+    if err:
+        st.error(err)
+        return
 
     total_rel = int(matriz.to_numpy().sum())
 
+    st.success("Excel MIC MAC cargado correctamente.")
+    st.caption(f"Cantidad de variables: {len(variables)} | Suma total de relaciones: {total_rel}")
+
+    st.markdown("**Vista previa de la matriz cargada**")
+    st.dataframe(matriz, use_container_width=True)
+
     if total_rel == 0:
-        st.error("⚠️ Debes asignar relaciones en la matriz. El MIC MAC no se interpreta con todos los valores en 0.")
+        st.error("⚠️ La matriz está en cero. Debes asignar relaciones para generar el MIC MAC.")
+        return
 
     df_mic = calcular_micmac(matriz)
 
-    st.markdown("**Resultados MIC MAC**")
+    st.markdown("### 3) Resultados MIC MAC")
     st.dataframe(
         df_mic[["variable", "influencia", "dependencia", "zona"]],
         use_container_width=True,
@@ -1791,6 +2058,17 @@ def ui_micmac(source_name: str, df_par: pd.DataFrame, key_prefix: str):
             key=f"{key_prefix}_dl_map"
         )
 
+    st.divider()
+    st.markdown("### 4) Descargar resultados MIC MAC en Excel")
+
+    excel_resultados = _micmac_exportar_resultados_excel(matriz, df_mic, source_name)
+    st.download_button(
+        "📥 Descargar resultados MIC MAC (Excel)",
+        data=excel_resultados,
+        file_name=f"Resultados_MICMAC_{source_name.replace(' ', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"{key_prefix}_dl_excel_resultados"
+    )
 # ============================================================================
 # ============================== PARTE 10/12 ================================
 # ========================== UI Editor principal =============================
