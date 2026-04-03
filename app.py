@@ -2142,26 +2142,63 @@ with tab_editor:
     nombre_pareto = st.text_input("Nombre del Pareto", "").strip()
 
     opts = sorted([c["descriptor"] for c in CATALOGO]) if CATALOGO else []
+
+    # ---- CAMBIO: sin opción de select all del multiselect nativo ----
+    st.markdown("**Selecciona los descriptores a incluir desde el catálogo**")
+    filtro_desc = st.text_input(
+        "Buscar descriptor en catálogo",
+        value="",
+        key="filtro_catalogo_desc"
+    ).strip().lower()
+
+    opts_filtrados = [o for o in opts if filtro_desc in o.lower()] if filtro_desc else opts
+
     msel = st.multiselect(
-        "Selecciona los descriptores a incluir desde el catálogo",
-        options=opts,
-        key="msel"
+        "Descriptores",
+        options=opts_filtrados,
+        default=[x for x in st.session_state.get("msel", []) if x in opts_filtrados],
+        key="msel_visible",
+        label_visibility="collapsed"
     )
 
-    if msel != st.session_state.get("last_msel", []):
+    # Sincroniza selección visible con selección real acumulada
+    seleccion_previa = set(st.session_state.get("msel", []))
+    visibles_previos = set([x for x in seleccion_previa if x in opts_filtrados])
+    visibles_nuevos = set(msel)
+
+    seleccion_actualizada = (seleccion_previa - visibles_previos) | visibles_nuevos
+    st.session_state["msel"] = sorted(seleccion_actualizada)
+
+    if st.session_state["msel"]:
+        st.caption(f"Descriptores seleccionados: {len(st.session_state['msel'])}")
+
+        if st.button("🧹 Limpiar selección de catálogo", key="limpiar_seleccion_catalogo"):
+            st.session_state["msel"] = []
+            st.session_state["last_msel"] = []
+            st.session_state["editor_df"] = pd.DataFrame(columns=["descriptor", "frecuencia"])
+            st.rerun()
+
+    msel_real = st.session_state["msel"]
+
+    if msel_real != st.session_state.get("last_msel", []):
         data = []
         freq_map_actual = st.session_state.get("freq_map", {})
-        manuales_actuales = set(st.session_state.get("manual_rows", pd.DataFrame(columns=["descriptor"])).get("descriptor", []))
-        for d in msel:
+        manuales_actuales = set(
+            st.session_state.get(
+                "manual_rows",
+                pd.DataFrame(columns=["descriptor"])
+            ).get("descriptor", [])
+        )
+        for d in msel_real:
             if d not in manuales_actuales:
                 data.append({
                     "descriptor": d,
                     "frecuencia": freq_map_actual.get(d, 0)
                 })
         st.session_state["editor_df"] = pd.DataFrame(data)
-        st.session_state["last_msel"] = list(msel)
+        st.session_state["last_msel"] = list(msel_real)
 
-    if msel:
+    if msel_real:
         df_edit = st.data_editor(
             st.session_state["editor_df"],
             num_rows="fixed",
@@ -2181,7 +2218,10 @@ with tab_editor:
             "Aquí puedes agregar descriptores que no estén en el catálogo. "
             "Se integran al Pareto, al portafolio, a Excel, a PDF y al MIC MAC."
         )
-        manual_df_base = st.session_state.get("manual_rows", pd.DataFrame(columns=["descriptor", "frecuencia"]))
+        manual_df_base = st.session_state.get(
+            "manual_rows",
+            pd.DataFrame(columns=["descriptor", "frecuencia"])
+        )
         manual_df = st.data_editor(
             manual_df_base if not manual_df_base.empty else pd.DataFrame([{"descriptor": "", "frecuencia": 0}]),
             use_container_width=True,
@@ -2193,7 +2233,10 @@ with tab_editor:
             }
         )
         manual_df["descriptor"] = manual_df["descriptor"].astype(str).str.strip()
-        manual_df = manual_df[(manual_df["descriptor"] != "") & (manual_df["descriptor"].str.lower() != "nan")]
+        manual_df = manual_df[
+            (manual_df["descriptor"] != "") &
+            (manual_df["descriptor"].str.lower() != "nan")
+        ]
         st.session_state["manual_rows"] = manual_df[["descriptor", "frecuencia"]].reset_index(drop=True)
 
     df_total_editor = fusionar_editor_y_manuales(
@@ -2283,8 +2326,6 @@ with tab_editor:
     else:
         st.session_state["freq_map"] = {}
         st.info("Selecciona al menos un descriptor o agrega uno manual para comenzar.")
-
-
 # ============================================================================
 # ============================== PARTE 11/12 ================================
 # ======================== UI Portafolio / Unificado / MIC MAC ==============
@@ -2368,11 +2409,65 @@ with tab_portafolio:
 
         for nombre, mapa in list(port.items()):
             with st.expander(f"{nombre}", expanded=False):
-                dfp = calcular_pareto(df_desde_freq_map(mapa))
+                dfp_edit = pd.DataFrame(
+                    [{"descriptor": d, "frecuencia": int(f)} for d, f in mapa.items()]
+                ).sort_values("descriptor").reset_index(drop=True)
+
+                if dfp_edit.empty:
+                    st.info("Este Pareto no tiene datos.")
+                    continue
+
+                st.markdown("**Editar filas del Pareto guardado**")
+                st.caption(
+                    "Aquí puedes corregir descriptores mal escritos, cambiar frecuencias o eliminar filas. "
+                    "Luego guarda los cambios."
+                )
+
+                dfp_edit_new = st.data_editor(
+                    dfp_edit,
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    key=f"editor_port_{nombre}",
+                    column_config={
+                        "descriptor": st.column_config.TextColumn("Descriptor", width="large"),
+                        "frecuencia": st.column_config.NumberColumn("Frecuencia", min_value=0, step=1)
+                    }
+                )
+
+                dfp_edit_new["descriptor"] = dfp_edit_new["descriptor"].astype(str).str.strip()
+                dfp_edit_new["frecuencia"] = pd.to_numeric(
+                    dfp_edit_new["frecuencia"], errors="coerce"
+                ).fillna(0).astype(int)
+
+                dfp_edit_new = dfp_edit_new[
+                    (dfp_edit_new["descriptor"] != "") &
+                    (dfp_edit_new["descriptor"].str.lower() != "nan") &
+                    (dfp_edit_new["frecuencia"] > 0)
+                ].copy()
+
+                freq_map_editado = dict(
+                    zip(dfp_edit_new["descriptor"], dfp_edit_new["frecuencia"])
+                )
+
+                col_guardar_edit, col_reset_edit = st.columns(2)
+
+                with col_guardar_edit:
+                    if st.button(f"💾 Guardar cambios en '{nombre}'", key=f"save_edit_{nombre}", use_container_width=True):
+                        st.session_state["portafolio"][nombre] = normalizar_freq_map(freq_map_editado)
+                        sheets_guardar_pareto(nombre, freq_map_editado, sobrescribir=True)
+                        st.success(f"Se actualizaron los datos del Pareto '{nombre}'.")
+                        st.rerun()
+
+                with col_reset_edit:
+                    if st.button(f"↩️ Revertir cambios de '{nombre}'", key=f"reset_edit_{nombre}", use_container_width=True):
+                        st.rerun()
+
+                dfp = calcular_pareto(df_desde_freq_map(freq_map_editado if freq_map_editado else mapa))
                 dfp_pri = obtener_df_priorizado(dfp)
 
+                st.divider()
                 dibujar_pareto(dfp, nombre)
-                st.caption(f"Total de respuestas tratadas: {int(dfp['frecuencia'].sum())}")
+                st.caption(f"Total de respuestas tratadas: {int(dfp['frecuencia'].sum()) if not dfp.empty else 0}")
 
                 st.markdown("**Problemáticas priorizadas**")
                 st.dataframe(
@@ -2566,7 +2661,6 @@ with tab_micmac:
         st.info("No hay datos disponibles para construir MIC MAC.")
     else:
         ui_micmac(source_name, df_source, key_prefix=f"mic_{source_name.replace(' ', '_')}")
-
 
 # ============================================================================
 # ============================== PARTE 12/12 ================================
