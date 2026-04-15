@@ -168,6 +168,44 @@ def combinar_maps(maps: List[Dict[str, int]]) -> Dict[str, int]:
     return total
 
 
+def combinar_maps_con_origen(nombres: List[str], maps: List[Dict[str, int]]) -> pd.DataFrame:
+    """
+    Genera un dataframe de desglose por origen.
+    Cada columna representa un Pareto/Excel origen y se agrega una columna TOTAL.
+    """
+    if not nombres or not maps:
+        return pd.DataFrame(columns=["descriptor", "categoria", "total"])
+
+    acumulado = {}
+
+    for nombre, mapa in zip(nombres, maps):
+        nombre_col = str(nombre).strip() if str(nombre).strip() else "Sin_nombre"
+        mapa_norm = normalizar_freq_map(mapa)
+
+        for descriptor, freq in mapa_norm.items():
+            if descriptor not in acumulado:
+                acumulado[descriptor] = {}
+            acumulado[descriptor][nombre_col] = acumulado[descriptor].get(nombre_col, 0) + int(freq)
+
+    if not acumulado:
+        return pd.DataFrame(columns=["descriptor", "categoria", "total"])
+
+    df = pd.DataFrame.from_dict(acumulado, orient="index").fillna(0).reset_index()
+    df = df.rename(columns={"index": "descriptor"})
+
+    cols_origen = [c for c in df.columns if c != "descriptor"]
+    for c in cols_origen:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+
+    df["categoria"] = df["descriptor"].map(lambda x: DESC2CAT.get(x, "Manual / sin categoría"))
+    df["total"] = df[cols_origen].sum(axis=1).astype(int)
+
+    df = df[["descriptor", "categoria", "total"] + cols_origen]
+    df = df.sort_values(["total", "descriptor"], ascending=[False, True]).reset_index(drop=True)
+
+    return df
+
+
 def info_pareto(freq_map: Dict[str, int]) -> Dict[str, int]:
     d = normalizar_freq_map(freq_map)
     return {"descriptores": len(d), "total": int(sum(d.values()))}
@@ -196,15 +234,9 @@ def calcular_pareto(df_in: pd.DataFrame) -> pd.DataFrame:
     df["acumulado"] = df["frecuencia"].cumsum()
     df["pct_acum"] = (df["acumulado"] / total * 100).round(2)
 
-    # tramo clásico visual
     df["segmento_real"] = np.where(df["pct_acum"] <= 80.00, "80%", "20%")
-
-    # tramo priorizado estricto:
-    # SOLO lo que esté en 80.00% o menos
     df["segmento"] = np.where(df["pct_acum"] <= 80.00, "PRIORIZADO", "NO PRIORIZADO")
 
-    # seguridad: si por algún caso extremo ninguno quedó <=80,
-    # al menos deja el primero priorizado
     if not df.empty and (df["segmento"] == "PRIORIZADO").sum() == 0:
         df.loc[0, "segmento"] = "PRIORIZADO"
 
@@ -262,7 +294,6 @@ def _wrap_for_two_lines(labels: List[str]) -> List[str]:
             txt = "\n".join(parts[:2])
         wrapped.append(txt)
     return wrapped
-
 
 # ============================================================================
 # ============================== PARTE 4/12 =================================
@@ -377,11 +408,12 @@ def _pareto_png(df_par: pd.DataFrame, titulo: str, solo_priorizados: bool = Fals
     return buf.getvalue()
 
 
-def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
+def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str, df_desglose: pd.DataFrame | None = None) -> bytes:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         hoja = "Pareto"
         df_x = df_par.copy()
+
         if df_x.empty:
             pd.DataFrame(columns=[
                 "categoria", "descriptor", "frecuencia", "porcentaje",
@@ -401,6 +433,14 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         ws = writer.sheets[hoja]
         pct_fmt = wb.add_format({"num_format": "0.00%"})
         total_fmt = wb.add_format({"bold": True})
+        head_fmt = wb.add_format({
+            "bold": True,
+            "bg_color": "#0B3954",
+            "font_color": "white",
+            "border": 1,
+            "align": "center",
+            "valign": "vcenter"
+        })
 
         ws.set_column("A:A", 22)
         ws.set_column("B:B", 55)
@@ -409,6 +449,9 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         ws.set_column("E:E", 18, pct_fmt)
         ws.set_column("F:F", 12)
         ws.set_column("G:G", 16)
+
+        for col_num, value in enumerate(df_x.columns.values):
+            ws.write(0, col_num, value, head_fmt)
 
         n = len(df_x)
         cats = f"=Pareto!$B$2:$B${n+1}"
@@ -450,8 +493,29 @@ def exportar_excel_con_grafico(df_par: pd.DataFrame, titulo: str) -> bytes:
         chart.set_legend({"position": "bottom"})
         chart.set_size({"width": 1180, "height": 420})
         ws.insert_chart("I2", chart)
-    return output.getvalue()
 
+        # =========================
+        # HOJA DE DESGLOSE
+        # =========================
+        if df_desglose is not None and not df_desglose.empty:
+            hoja_desglose = "Desglose"
+            df_d = df_desglose.copy()
+
+            df_d.to_excel(writer, sheet_name=hoja_desglose, index=False)
+            ws_d = writer.sheets[hoja_desglose]
+
+            for col_num, value in enumerate(df_d.columns.values):
+                ws_d.write(0, col_num, value, head_fmt)
+
+            ws_d.set_column(0, 0, 45)  # descriptor
+            ws_d.set_column(1, 1, 24)  # categoria
+            ws_d.set_column(2, 2, 12)  # total
+
+            if len(df_d.columns) > 3:
+                for i in range(3, len(df_d.columns)):
+                    ws_d.set_column(i, i, 18)
+
+    return output.getvalue()
 
 # ============================================================================
 # ============================== PARTE 5/12 =================================
@@ -2563,7 +2627,13 @@ with tab_unificado:
 
         if seleccion:
             mapas = [port[n] for n in seleccion]
-            mapa_total = combinar_maps(mapas)
+
+            # NUEVO: desglose por origen
+            df_desglose_unificado = combinar_maps_con_origen(seleccion, mapas)
+
+            # mapa total para el pareto unificado
+            mapa_total = dict(zip(df_desglose_unificado["descriptor"], df_desglose_unificado["total"]))
+
             df_uni = calcular_pareto(df_desde_freq_map(mapa_total))
             df_uni_pri = obtener_df_priorizado(df_uni)
 
@@ -2577,6 +2647,9 @@ with tab_unificado:
                 use_container_width=True,
                 hide_index=True
             )
+
+            st.markdown("### 🔎 Desglose por origen")
+            st.dataframe(df_desglose_unificado, use_container_width=True, hide_index=True)
 
             c1, c2, c3 = st.columns(3)
             with c1:
@@ -2595,8 +2668,8 @@ with tab_unificado:
                 )
             with c3:
                 st.download_button(
-                    "📥 Excel con gráfico",
-                    exportar_excel_con_grafico(df_uni, "Pareto Unificado"),
+                    "📥 Excel con gráfico y desglose",
+                    exportar_excel_con_grafico(df_uni, "Pareto Unificado", df_desglose=df_desglose_unificado),
                     file_name="Pareto_Unificado.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
@@ -2662,7 +2735,6 @@ with tab_micmac:
         st.info("No hay datos disponibles para construir MIC MAC.")
     else:
         ui_micmac(source_name, df_source, key_prefix=f"mic_{source_name.replace(' ', '_')}")
-
 # ============================================================================
 # ============================== PARTE 12/12 ================================
 # ======================== Créditos y limpieza final =========================
