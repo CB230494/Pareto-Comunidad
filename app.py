@@ -1079,10 +1079,6 @@ def _modalidades_png(title: str, data_pairs: List[Tuple[str, float]], kind: str 
 # ============================================================================
 
 def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
-    """
-    Cuadro simplificado: Descriptor | Frecuencia | %
-    Muestra solo priorizados para el PDF.
-    """
     df_tab = obtener_df_priorizado(df_par)
     fracs = [0.62, 0.20, 0.18]
     col_widths = [f * doc_width for f in fracs]
@@ -1107,14 +1103,15 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
     data = [head]
 
     total_respuestas = int(df_tab["frecuencia"].sum()) if not df_tab.empty else 0
-    for _, r in df_tab.iterrows():
-        descriptor = Paragraph(str(r["descriptor"]), cell_style)
-        frecuencia = int(r["frecuencia"])
-        pct = f'{float(r["porcentaje"]):.2f}%'
-        data.append([descriptor, frecuencia, pct])
 
-    total_row = [Paragraph("<b>Total priorizado</b>", cell_style), total_respuestas, ""]
-    data.append(total_row)
+    for _, r in df_tab.iterrows():
+        data.append([
+            Paragraph(str(r["descriptor"]), cell_style),
+            int(r["frecuencia"]),
+            f'{float(r["porcentaje"]):.2f}%'
+        ])
+
+    data.append([Paragraph("<b>Total priorizado</b>", cell_style), total_respuestas, ""])
     total_index = len(data) - 1
 
     t = Table(data, colWidths=col_widths, repeatRows=1, hAlign="LEFT")
@@ -1123,27 +1120,22 @@ def _tabla_resultados_flowable(df_par: pd.DataFrame, doc_width: float) -> Table:
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 10.5),
-
         ("FONTSIZE", (0, 1), (-1, -1), 9.6),
         ("ALIGN", (0, 1), (0, -1), "LEFT"),
         ("ALIGN", (1, 1), (-1, -2), "RIGHT"),
-
         ("LEFTPADDING", (0, 0), (-1, -1), 7),
         ("RIGHTPADDING", (0, 0), (-1, -1), 7),
         ("TOPPADDING", (0, 0), (-1, -1), 5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -2), [
             colors.HexColor("#F8FBFD"),
             colors.HexColor("#EDF5FA")
         ]),
         ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C9D8E6")),
-
         ("BACKGROUND", (0, total_index), (-1, total_index), colors.HexColor("#DCEAF6")),
         ("FONTNAME", (0, total_index), (-1, total_index), "Helvetica-Bold"),
         ("ALIGN", (1, total_index), (1, total_index), "RIGHT"),
-        ("ALIGN", (2, total_index), (2, total_index), "RIGHT"),
     ]))
     return t
 
@@ -1170,14 +1162,20 @@ def generar_pdf_pareto_simple(nombre_informe: str, df_par: pd.DataFrame) -> byte
     story.append(Spacer(1, 0.4 * cm))
 
     from PIL import Image as PILImage
-    pareto_png = _pareto_png(df_par, f"Pareto priorizado – {nombre_informe}", solo_priorizados=True)
+
+    pareto_png = _pareto_png(
+        df_par,
+        f"Pareto priorizado – {nombre_informe}",
+        solo_priorizados=True
+    )
+
     with io.BytesIO(pareto_png) as _b:
         im = PILImage.open(_b)
         w_px, h_px = im.size
 
     width_pts = doc.width
-    proportional_height = (h_px / w_px) * width_pts
-    height_pts = max(proportional_height, 7 * cm)
+    height_pts = (h_px / w_px) * width_pts
+    height_pts = max(height_pts, 7 * cm)
 
     story.append(RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts))
     story.append(Spacer(1, 0.6 * cm))
@@ -1187,7 +1185,12 @@ def generar_pdf_pareto_simple(nombre_informe: str, df_par: pd.DataFrame) -> byte
     return buf.getvalue()
 
 
-def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: List[Dict]) -> bytes:
+def generar_pdf_informe(
+    nombre_informe: str,
+    df_par: pd.DataFrame,
+    desgloses: List[Dict],
+    nombre_delegacion: str = ""
+) -> bytes:
     if df_par.empty:
         st.warning("No hay datos válidos para generar el informe.")
         return b""
@@ -1197,6 +1200,7 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
         buf, pagesize=A4,
         leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm
     )
+
     frame_std = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal")
     frame_last = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="last")
 
@@ -1227,7 +1231,7 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
         from PIL import Image as PILImage
 
         with PILImage.open(logo_2) as im2:
-          w2, h2 = im2.size
+            w2, h2 = im2.size
 
         ancho_logo2 = 10.5 * cm
         alto_logo2 = (h2 / w2) * ancho_logo2
@@ -1239,6 +1243,11 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
     story += [Paragraph("Análisis de Problemáticas Priorizadas en Seguridad Ciudadana", stys["CoverSubtitle"])]
     story += [Spacer(1, 0.20 * cm)]
     story += [Paragraph(f"<b>{nombre_informe}</b>", stys["CoverSubtitle"])]
+
+    if str(nombre_delegacion).strip():
+        story += [Spacer(1, 0.12 * cm)]
+        story += [Paragraph(f"Delegación: <b>{nombre_delegacion.strip()}</b>", stys["CoverSubtitle"])]
+
     story += [Spacer(1, 0.35 * cm)]
     story += [Paragraph("Estrategia Integral de Prevención para la Seguridad Pública", stys["CoverDate"])]
     story += [Paragraph("“Sembremos Seguridad”", stys["CoverDate"])]
@@ -1284,17 +1293,23 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
     story += [Paragraph("Resultados generales", stys["TitleBig"]), Spacer(1, 0.15 * cm)]
     story += [Paragraph(_resumen_texto(df_par), stys["Body"]), Spacer(1, 0.22 * cm)]
     story += [Paragraph(
-        "El diagrama incluido a continuación se presenta de forma completa para una mejor lectura integral del comportamiento observado. "
-        "No obstante, la tabla resumen muestra únicamente los descriptores priorizados, con el fin de enfocar la interpretación en los temas de mayor relevancia.",
+        "El diagrama incluido a continuación muestra únicamente las problemáticas priorizadas, "
+        "con el fin de mejorar la legibilidad del informe y enfocar la interpretación en los temas "
+        "de mayor relevancia del análisis Pareto.",
         stys["SectionNote"]
     )]
     story += [Spacer(1, 0.32 * cm)]
 
     # -------------------------
-    # DIAGRAMA COMPLETO
+    # DIAGRAMA SOLO PRIORIZADOS
     # -------------------------
     from PIL import Image as PILImage
-    pareto_png = _pareto_png(df_par, "Diagrama de Pareto completo", solo_priorizados=False)
+
+    pareto_png = _pareto_png(
+        df_par,
+        "Diagrama de Pareto priorizado",
+        solo_priorizados=True
+    )
 
     with io.BytesIO(pareto_png) as _b:
         im = PILImage.open(_b)
@@ -1307,7 +1322,7 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
         RLImage(io.BytesIO(pareto_png), width=width_pts, height=height_pts),
         Spacer(1, 0.22 * cm),
         Paragraph(
-            "Figura 1. Diagrama de Pareto completo de las problemáticas registradas.",
+            "Figura 1. Diagrama de Pareto de las problemáticas priorizadas.",
             stys["Small"]
         ),
     ]))
@@ -1326,6 +1341,7 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
     # MODALIDADES
     # -------------------------
     prior_desc = set(df_pri["descriptor"].tolist())
+
     for sec in desgloses:
         descriptor = sec.get("descriptor", "").strip()
         if descriptor not in prior_desc:
@@ -1350,27 +1366,20 @@ def generar_pdf_informe(nombre_informe: str, df_par: pd.DataFrame, desgloses: Li
         story.append(KeepTogether(bloque))
 
     # -------------------------
-    # CONCLUSIONES
+    # ÚLTIMA PÁGINA — CRÉDITO FINAL
     # -------------------------
     story += [PageBreak(), NextPageTemplate("Last")]
-    story += [
-        Paragraph("Conclusiones y recomendaciones", stys["TitleBigCenter"]),
-        Spacer(1, 0.2 * cm),
-    ]
+    story += [Spacer(1, 2.2 * cm)]
 
-    bullets = [
-        "Priorizar intervenciones sobre los descriptores que conforman el tramo priorizado del análisis Pareto.",
-        "Coordinar acciones interinstitucionales enfocadas en las modalidades con mayor porcentaje.",
-        "Fortalecer la participación comunitaria con presencia territorial.",
-        "Monitorear y actualizar los indicadores periódicamente.",
-    ]
-    for b in bullets:
-        story += [Paragraph(b, stys["BulletList"], bulletText="•")]
+    if logo_1.exists():
+        story += [
+            RLImage(str(logo_1), width=8.0 * cm, height=8.0 * cm, hAlign="CENTER"),
+            Spacer(1, 1.0 * cm)
+        ]
 
     story += [
-        Spacer(1, 0.8 * cm),
-        Paragraph("Dirección de Programas Policiales Preventivos – MSP", stys["H1Center"]),
-        Paragraph("Sembremos Seguridad", stys["H1Center"]),
+        Paragraph("Elaborado por la Estrategia", stys["TitleBigCenter"]),
+        Paragraph("Sembremos Seguridad", stys["TitleBigCenter"]),
     ]
 
     doc.build(story)
@@ -1381,6 +1390,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
     st.caption("Opcional: agrega secciones de ‘Modalidades’. Cada sección admite hasta 10 filas (Etiqueta + %).")
     max_secs = max(0, len(descriptor_list))
     default_val = 1 if max_secs > 0 else 0
+
     n_secs = st.number_input(
         "Cantidad de secciones de Modalidades",
         min_value=0,
@@ -1389,7 +1399,9 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
         step=1,
         key=f"{key_prefix}_nsecs"
     )
+
     desgloses: List[Dict] = []
+
     for i in range(n_secs):
         with st.expander(f"Sección Modalidades #{i+1}", expanded=(i == 0)):
             dsel = st.selectbox(
@@ -1416,6 +1428,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
 
             rows = [{"Etiqueta": "", "%": 0.0} for _ in range(10)]
             df_rows = pd.DataFrame(rows)
+
             de = st.data_editor(
                 df_rows,
                 key=f"{key_prefix}_rows_{i}",
@@ -1426,6 +1439,7 @@ def ui_desgloses(descriptor_list: List[str], key_prefix: str) -> List[Dict]:
                 },
                 num_rows="fixed",
             )
+
             total_pct = float(pd.to_numeric(de["%"], errors="coerce").fillna(0).sum())
             st.caption(f"Suma actual: {total_pct:.1f}% (recomendado ≈100%)")
 
@@ -2208,7 +2222,6 @@ with tab_editor:
 
     opts = sorted([c["descriptor"] for c in CATALOGO]) if CATALOGO else []
 
-    # ---- CAMBIO: sin opción de select all del multiselect nativo ----
     st.markdown("**Selecciona los descriptores a incluir desde el catálogo**")
     filtro_desc = st.text_input(
         "Buscar descriptor en catálogo",
@@ -2226,7 +2239,6 @@ with tab_editor:
         label_visibility="collapsed"
     )
 
-    # Sincroniza selección visible con selección real acumulada
     seleccion_previa = set(st.session_state.get("msel", []))
     visibles_previos = set([x for x in seleccion_previa if x in opts_filtrados])
     visibles_nuevos = set(msel)
@@ -2254,12 +2266,14 @@ with tab_editor:
                 pd.DataFrame(columns=["descriptor"])
             ).get("descriptor", [])
         )
+
         for d in msel_real:
             if d not in manuales_actuales:
                 data.append({
                     "descriptor": d,
                     "frecuencia": freq_map_actual.get(d, 0)
                 })
+
         st.session_state["editor_df"] = pd.DataFrame(data)
         st.session_state["last_msel"] = list(msel_real)
 
@@ -2283,10 +2297,12 @@ with tab_editor:
             "Aquí puedes agregar descriptores que no estén en el catálogo. "
             "Se integran al Pareto, al portafolio, a Excel, a PDF y al MIC MAC."
         )
+
         manual_df_base = st.session_state.get(
             "manual_rows",
             pd.DataFrame(columns=["descriptor", "frecuencia"])
         )
+
         manual_df = st.data_editor(
             manual_df_base if not manual_df_base.empty else pd.DataFrame([{"descriptor": "", "frecuencia": 0}]),
             use_container_width=True,
@@ -2297,11 +2313,13 @@ with tab_editor:
                 "frecuencia": st.column_config.NumberColumn("Frecuencia", min_value=0, step=1)
             }
         )
+
         manual_df["descriptor"] = manual_df["descriptor"].astype(str).str.strip()
         manual_df = manual_df[
             (manual_df["descriptor"] != "") &
             (manual_df["descriptor"].str.lower() != "nan")
         ]
+
         st.session_state["manual_rows"] = manual_df[["descriptor", "frecuencia"]].reset_index(drop=True)
 
     df_total_editor = fusionar_editor_y_manuales(
@@ -2321,22 +2339,33 @@ with tab_editor:
         dibujar_pareto(df_par, nombre_pareto or "Pareto individual")
 
         cimg1, cimg2, cimg3 = st.columns(3)
+
         with cimg1:
             st.download_button(
                 "📥 Imagen Pareto completo (PNG)",
-                data=_pareto_png(df_par, f"Pareto completo – {nombre_pareto or 'sin_nombre'}", solo_priorizados=False),
+                data=_pareto_png(
+                    df_par,
+                    f"Pareto completo – {nombre_pareto or 'sin_nombre'}",
+                    solo_priorizados=False
+                ),
                 file_name=f"Pareto_Completo_{(nombre_pareto or 'sin_nombre').replace(' ', '_')}.png",
                 mime="image/png",
                 use_container_width=True
             )
+
         with cimg2:
             st.download_button(
                 "📥 Imagen Pareto priorizado (PNG)",
-                data=_pareto_png(df_par, f"Pareto priorizado – {nombre_pareto or 'sin_nombre'}", solo_priorizados=True),
+                data=_pareto_png(
+                    df_par,
+                    f"Pareto priorizado – {nombre_pareto or 'sin_nombre'}",
+                    solo_priorizados=True
+                ),
                 file_name=f"Pareto_Priorizado_{(nombre_pareto or 'sin_nombre').replace(' ', '_')}.png",
                 mime="image/png",
                 use_container_width=True
             )
+
         with cimg3:
             st.download_button(
                 "📥 Exportar Excel con gráfico",
@@ -2361,7 +2390,14 @@ with tab_editor:
         st.divider()
         desgloses = ui_desgloses(df_pri["descriptor"].tolist(), key_prefix="editor")
 
+        nombre_delegacion_individual = st.text_input(
+            "Nombre de la delegación para mostrar en portada del PDF",
+            value="",
+            key="delegacion_pdf_individual"
+        )
+
         col1, col2 = st.columns(2)
+
         with col1:
             if st.button("💾 Guardar en Portafolio (y Sheets)", type="primary", use_container_width=True):
                 if nombre_pareto:
@@ -2378,7 +2414,13 @@ with tab_editor:
                 if not nombre_pareto:
                     st.warning("Asigna un nombre para el informe.")
                 else:
-                    pdf_bytes = generar_pdf_informe(nombre_pareto, df_par, desgloses)
+                    pdf_bytes = generar_pdf_informe(
+                        nombre_pareto,
+                        df_par,
+                        desgloses,
+                        nombre_delegacion=nombre_delegacion_individual
+                    )
+
                     if pdf_bytes:
                         st.download_button(
                             label="📥 Descargar PDF",
@@ -2434,6 +2476,7 @@ with tab_portafolio:
             )
 
             col_excel, col_pdf, col_img1, col_img2 = st.columns(4)
+
             with col_excel:
                 st.download_button(
                     "📥 Excel del Pareto general",
@@ -2442,6 +2485,7 @@ with tab_portafolio:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="dl_pareto_general"
                 )
+
             with col_pdf:
                 pdf_simple = generar_pdf_pareto_simple("Pareto general portafolio", df_combo)
                 if pdf_simple:
@@ -2452,6 +2496,7 @@ with tab_portafolio:
                         mime="application/pdf",
                         key="pdf_pareto_general"
                     )
+
             with col_img1:
                 st.download_button(
                     "📥 Imagen completo",
@@ -2460,6 +2505,7 @@ with tab_portafolio:
                     mime="image/png",
                     key="png_pareto_general_full"
                 )
+
             with col_img2:
                 st.download_button(
                     "📥 Imagen priorizado",
@@ -2517,14 +2563,22 @@ with tab_portafolio:
                 col_guardar_edit, col_reset_edit = st.columns(2)
 
                 with col_guardar_edit:
-                    if st.button(f"💾 Guardar cambios en '{nombre}'", key=f"save_edit_{nombre}", use_container_width=True):
+                    if st.button(
+                        f"💾 Guardar cambios en '{nombre}'",
+                        key=f"save_edit_{nombre}",
+                        use_container_width=True
+                    ):
                         st.session_state["portafolio"][nombre] = normalizar_freq_map(freq_map_editado)
                         sheets_guardar_pareto(nombre, freq_map_editado, sobrescribir=True)
                         st.success(f"Se actualizaron los datos del Pareto '{nombre}'.")
                         st.rerun()
 
                 with col_reset_edit:
-                    if st.button(f"↩️ Revertir cambios de '{nombre}'", key=f"reset_edit_{nombre}", use_container_width=True):
+                    if st.button(
+                        f"↩️ Revertir cambios de '{nombre}'",
+                        key=f"reset_edit_{nombre}",
+                        use_container_width=True
+                    ):
                         st.rerun()
 
                 dfp = calcular_pareto(df_desde_freq_map(freq_map_editado if freq_map_editado else mapa))
@@ -2574,10 +2628,12 @@ with tab_portafolio:
                     if st.button(f"🗑️ Eliminar '{nombre}'", key=f"del_{nombre}"):
                         del st.session_state["portafolio"][nombre]
                         ok = sheets_eliminar_pareto(nombre)
+
                         if ok:
                             st.success(f"El Pareto '{nombre}' fue eliminado del sistema y de Google Sheets.")
                         else:
                             st.warning(f"El Pareto '{nombre}' se eliminó localmente, pero no pudo borrarse en Sheets.")
+
                         st.rerun()
 
                 with colE:
@@ -2592,12 +2648,26 @@ with tab_portafolio:
                             value=f"{nombre}",
                             key=f"inf_nom_{nombre}"
                         )
+
+                        nombre_delegacion_ind = st.text_input(
+                            "Nombre de la delegación para mostrar en portada",
+                            value="",
+                            key=f"delegacion_inf_{nombre}"
+                        )
+
                         desgloses_ind = ui_desgloses(
                             dfp_pri["descriptor"].tolist(),
                             key_prefix=f"inf_{nombre}"
                         )
+
                         if st.button("Generar PDF", key=f"btn_inf_{nombre}"):
-                            pdf_bytes = generar_pdf_informe(nombre_inf_ind, dfp, desgloses_ind)
+                            pdf_bytes = generar_pdf_informe(
+                                nombre_inf_ind,
+                                dfp,
+                                desgloses_ind,
+                                nombre_delegacion=nombre_delegacion_ind
+                            )
+
                             if pdf_bytes:
                                 st.download_button(
                                     "⬇️ Descargar PDF",
@@ -2606,6 +2676,7 @@ with tab_portafolio:
                                     mime="application/pdf",
                                     key=f"dl_inf_{nombre}",
                                 )
+
 
 # ---------------------------------------------------------------------------
 # TAB 3 — Informe unificado
@@ -2618,6 +2689,7 @@ with tab_unificado:
         st.info("Guarda al menos un Pareto para generar el informe unificado.")
     else:
         nombres = list(port.keys())
+
         seleccion = st.multiselect(
             "Selecciona los Paretos a incluir en el informe unificado",
             options=nombres,
@@ -2628,11 +2700,14 @@ with tab_unificado:
         if seleccion:
             mapas = [port[n] for n in seleccion]
 
-            # NUEVO: desglose por origen
             df_desglose_unificado = combinar_maps_con_origen(seleccion, mapas)
 
-            # mapa total para el pareto unificado
-            mapa_total = dict(zip(df_desglose_unificado["descriptor"], df_desglose_unificado["total"]))
+            mapa_total = dict(
+                zip(
+                    df_desglose_unificado["descriptor"],
+                    df_desglose_unificado["total"]
+                )
+            )
 
             df_uni = calcular_pareto(df_desde_freq_map(mapa_total))
             df_uni_pri = obtener_df_priorizado(df_uni)
@@ -2649,35 +2724,69 @@ with tab_unificado:
             )
 
             st.markdown("### 🔎 Desglose por origen")
-            st.dataframe(df_desglose_unificado, use_container_width=True, hide_index=True)
+            st.dataframe(
+                df_desglose_unificado,
+                use_container_width=True,
+                hide_index=True
+            )
 
             c1, c2, c3 = st.columns(3)
+
             with c1:
                 st.download_button(
                     "📥 Imagen Pareto completo",
-                    data=_pareto_png(df_uni, "Pareto Unificado completo", solo_priorizados=False),
+                    data=_pareto_png(
+                        df_uni,
+                        "Pareto Unificado completo",
+                        solo_priorizados=False
+                    ),
                     file_name="Pareto_Unificado_Completo.png",
                     mime="image/png"
                 )
+
             with c2:
                 st.download_button(
                     "📥 Imagen Pareto priorizado",
-                    data=_pareto_png(df_uni, "Pareto Unificado priorizado", solo_priorizados=True),
+                    data=_pareto_png(
+                        df_uni,
+                        "Pareto Unificado priorizado",
+                        solo_priorizados=True
+                    ),
                     file_name="Pareto_Unificado_Priorizado.png",
                     mime="image/png"
                 )
+
             with c3:
                 st.download_button(
                     "📥 Excel con gráfico y desglose",
-                    exportar_excel_con_grafico(df_uni, "Pareto Unificado", df_desglose=df_desglose_unificado),
+                    exportar_excel_con_grafico(
+                        df_uni,
+                        "Pareto Unificado",
+                        df_desglose=df_desglose_unificado
+                    ),
                     file_name="Pareto_Unificado.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
-            desgloses_uni = ui_desgloses(df_uni_pri["descriptor"].tolist(), key_prefix="uni")
+            nombre_delegacion_uni = st.text_input(
+                "Nombre de la delegación para mostrar en portada del PDF unificado",
+                value="",
+                key="delegacion_pdf_unificado"
+            )
+
+            desgloses_uni = ui_desgloses(
+                df_uni_pri["descriptor"].tolist(),
+                key_prefix="uni"
+            )
 
             if st.button("📄 Generar Informe PDF (Unificado)", type="primary"):
-                pdf_bytes = generar_pdf_informe("Pareto Unificado", df_uni, desgloses_uni)
+                pdf_bytes = generar_pdf_informe(
+                    "Pareto Unificado",
+                    df_uni,
+                    desgloses_uni,
+                    nombre_delegacion=nombre_delegacion_uni
+                )
+
                 if pdf_bytes:
                     st.download_button(
                         label="📥 Descargar Informe PDF (Unificado)",
@@ -2685,6 +2794,7 @@ with tab_unificado:
                         file_name="Informe_Pareto_Unificado.pdf",
                         mime="application/pdf"
                     )
+
 
 # ---------------------------------------------------------------------------
 # TAB 4 — MIC MAC
@@ -2694,11 +2804,16 @@ with tab_micmac:
     st.caption("Puedes construir MIC MAC desde el Pareto actual, desde un Pareto guardado o desde un unificado.")
 
     fuentes = ["Pareto actual en edición"]
+
     if st.session_state.get("portafolio"):
         fuentes += [f"Portafolio: {k}" for k in st.session_state["portafolio"].keys()]
         fuentes.append("Unificado desde portafolio")
 
-    fuente_sel = st.selectbox("Fuente de datos para MIC MAC", options=fuentes, index=0)
+    fuente_sel = st.selectbox(
+        "Fuente de datos para MIC MAC",
+        options=fuentes,
+        index=0
+    )
 
     df_source = pd.DataFrame()
     source_name = fuente_sel
@@ -2715,14 +2830,17 @@ with tab_micmac:
 
     elif fuente_sel == "Unificado desde portafolio":
         port = st.session_state.get("portafolio", {})
+
         if port:
             nombres = list(port.keys())
+
             seleccion_um = st.multiselect(
                 "Selecciona los Paretos a combinar para MIC MAC unificado",
                 options=nombres,
                 default=nombres,
                 key="micmac_unificado_select"
             )
+
             if seleccion_um:
                 mapa_total = combinar_maps([port[n] for n in seleccion_um])
                 df_source = calcular_pareto(df_desde_freq_map(mapa_total))
@@ -2734,7 +2852,11 @@ with tab_micmac:
     if df_source.empty:
         st.info("No hay datos disponibles para construir MIC MAC.")
     else:
-        ui_micmac(source_name, df_source, key_prefix=f"mic_{source_name.replace(' ', '_')}")
+        ui_micmac(
+            source_name,
+            df_source,
+            key_prefix=f"mic_{source_name.replace(' ', '_')}"
+        )
 # ============================================================================
 # ============================== PARTE 12/12 ================================
 # ======================== Créditos y limpieza final =========================
