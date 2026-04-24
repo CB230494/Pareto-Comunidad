@@ -2781,7 +2781,7 @@ with tab_unificado:
 
             if st.button("📄 Generar Informe PDF (Unificado)", type="primary"):
                 pdf_bytes = generar_pdf_informe(
-                    "Pareto Unificado",
+                    "Pareto General",
                     df_uni,
                     desgloses_uni,
                     nombre_delegacion=nombre_delegacion_uni
